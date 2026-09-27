@@ -8,16 +8,15 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-<script type="importmap">
+  <!-- L'importmap ne gère plus que React et l'interface pour éviter les conflits -->
+  <script type="importmap">
     {
       "imports": {
         "react": "https://esm.sh/react@18.2.0",
         "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
         "recharts": "https://esm.sh/recharts@2.12.0?deps=react@18.2.0,react-dom@18.2.0",
         "lucide-react": "https://esm.sh/lucide-react@0.330.0?deps=react@18.2.0",
-        "xlsx": "https://esm.sh/xlsx@0.18.5",
-        "firebase/app": "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js",
-        "firebase/firestore": "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js"
+        "xlsx": "https://esm.sh/xlsx@0.18.5"
       }
     }
   </script>
@@ -40,9 +39,9 @@
       Link2, Check, Clock, ArrowLeftRight, RefreshCw, Download, Upload, Pencil,
     } from "lucide-react";
     
-    // Initialisation Firebase
-    import { initializeApp } from "firebase/app";
-    import { getFirestore, doc, getDoc, setDoc } from "firebase/firestore";
+    // Initialisation Firebase : Imports directs depuis les serveurs officiels Google
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+    import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyCiLqXDB8L_c28PxKUKrA6TBsFvxq6kNLs",
@@ -56,7 +55,7 @@
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
 
-    // Fonctions de calcul et configuration[cite: 1]
+    // Fonctions de calcul et configuration
     function weeklyGainBourse(valueT, valuePrev, flows) {
       const netFlows = flows.reduce((s, f) => s + f.amount, 0);
       return valueT - valuePrev - netFlows;
