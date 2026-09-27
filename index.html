@@ -1,0 +1,2611 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Poste de pilotage patrimoine</title>
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.2.0",
+        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+        "recharts": "https://esm.sh/recharts@2.12.0?deps=react@18.2.0,react-dom@18.2.0",
+        "lucide-react": "https://esm.sh/lucide-react@0.330.0?deps=react@18.2.0",
+        "xlsx": "https://esm.sh/xlsx@0.18.5",
+        "firebase/app": "https://esm.sh/firebase@10.8.1/app",
+        "firebase/firestore": "https://esm.sh/firebase@10.8.1/firestore"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" data-type="module">
+    import React, { useState, useEffect, useMemo, useRef, useContext, createContext } from "react";
+    import { createRoot } from "react-dom/client";
+    import * as XLSX from "xlsx";
+    import {
+      AreaChart, Area, LineChart, Line, PieChart, Pie, Cell,
+      XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+      ReferenceDot, ReferenceLine, ComposedChart, Bar, BarChart, LabelList,
+    } from "recharts";
+    import {
+      Wallet, TrendingUp, PiggyBank, Percent, Plus, Moon, Sun,
+      ChevronDown, ChevronRight, ChevronLeft, X, ArrowUpRight, ArrowDownRight,
+      Link2, Check, Clock, ArrowLeftRight, RefreshCw, Download, Upload, Pencil,
+    } from "lucide-react";
+    
+    // Initialisation Firebase
+    import { initializeApp } from "firebase/app";
+    import { getFirestore, doc, getDoc, setDoc } from "firebase/firestore";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCiLqXDB8L_c28PxKUKrA6TBsFvxq6kNLs",
+      authDomain: "suivi-patrimoine-8448c.firebaseapp.com",
+      projectId: "suivi-patrimoine-8448c",
+      storageBucket: "suivi-patrimoine-8448c.firebasestorage.app",
+      messagingSenderId: "69675242297",
+      appId: "1:69675242297:web:ca7a8de64bbf3a508ccee8"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    // Fonctions de calcul et configuration[cite: 1]
+    function weeklyGainBourse(valueT, valuePrev, flows) {
+      const netFlows = flows.reduce((s, f) => s + f.amount, 0);
+      return valueT - valuePrev - netFlows;
+    }
+
+    function modifiedDietz(beginningValue, endingValue, flows, totalDays) {
+      if (totalDays <= 0) return 0;
+      const netFlows = flows.reduce((s, f) => s + f.amount, 0);
+      const weightedFlows = flows.reduce((s, f) => {
+        const weight = (totalDays - f.dayOfPeriod) / totalDays;
+        return s + f.amount * weight;
+      }, 0);
+      const gain = endingValue - beginningValue - netFlows;
+      const avgCapital = beginningValue + weightedFlows;
+      return avgCapital !== 0 ? gain / avgCapital : 0;
+    }
+
+    function buildWeeklySeries(weeklySnapshots) {
+      let cumGain = 0;
+      let cumCapital = 0;
+      return weeklySnapshots.map((snap, i) => {
+        const prev = i === 0 ? null : weeklySnapshots[i - 1];
+        const gain = prev ? weeklyGainBourse(snap.bourseValue, prev.bourseValue, snap.flows) : 0;
+        const flowSum = snap.flows.reduce((s, f) => s + f.amount, 0);
+        cumGain += gain;
+        cumCapital += flowSum;
+        return { ...snap, gain, cumGain, cumCapital, flowSum };
+      });
+    }
+
+    function buildWealthDecomposition(monthlySnapshots, allCashFlows) {
+      if (monthlySnapshots.length === 0) return [];
+      const initial = monthlySnapshots[0].totalWealth;
+      let cumFlows = 0;
+      return monthlySnapshots.map((snap, i) => {
+        if (i > 0) {
+          const prevDate = monthlySnapshots[i - 1].date;
+          const flowsInPeriod = allCashFlows
+            .filter((f) => f.date > prevDate && f.date <= snap.date)
+            .reduce((s, f) => s + f.amount, 0);
+          cumFlows += flowsInPeriod;
+        }
+        const capitalBase = initial + cumFlows;
+        const gains = snap.totalWealth - capitalBase;
+        return { date: snap.date, capital: Math.round(capitalBase), gains: Math.round(gains), total: snap.totalWealth };
+      });
+    }
+
+    function resampleToMonthly(snapshots) {
+      const byPeriod = new Map();
+      [...snapshots]
+        .sort((a, b) => new Date(a.date) - new Date(b.date))
+        .forEach((s) => {
+          const key = s.periode || s.date.slice(0, 7);
+          byPeriod.set(key, s);
+        });
+      return Array.from(byPeriod.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([, s]) => s);
+    }
+
+    function cashBuffer(byAccount) {
+      return (byAccount.lcl || 0) + (byAccount.revolut || 0);
+    }
+
+    function buildMonthlyMetrics(monthlySnapshots, allFlows) {
+      const resampled = resampleToMonthly(monthlySnapshots);
+      const decomposition = buildWealthDecomposition(resampled, allFlows);
+      return decomposition.map((d, i) => {
+        const prev = i === 0 ? null : decomposition[i - 1];
+        const cash = prev ? cashBuffer(resampled[i].byAccount) - cashBuffer(resampled[i - 1].byAccount) : 0;
+        const savings = prev ? d.capital - prev.capital : 0;
+        const gainRaw = prev ? d.gains - prev.gains : 0;
+        return {
+          date: d.date,
+          wealth: d.total,
+          savings,
+          cash,
+          gain: gainRaw - cash,
+          epargne: savings + cash,
+          monthChange: savings + cash + (gainRaw - cash),
+        };
+      });
+    }
+
+    function buildYearlyMetrics(monthlyMetrics) {
+      const byYear = new Map();
+      monthlyMetrics.forEach((m) => {
+        const y = new Date(m.date).getFullYear();
+        if (!byYear.has(y)) byYear.set(y, { year: y, savings: 0, cash: 0, gain: 0, epargne: 0 });
+        const acc = byYear.get(y);
+        acc.savings += m.savings;
+        acc.cash += m.cash;
+        acc.gain += m.gain;
+        acc.epargne += m.epargne;
+      });
+      return Array.from(byYear.values())
+        .sort((a, b) => a.year - b.year)
+        .map((y) => ({ ...y, wealthChange: y.savings + y.cash + y.gain }));
+    }
+
+    const SECTOR_GROUP_EXACT = {
+      "Technologie": "Technologie",
+      "Semi-conducteurs": "Technologie",
+      "Technologie / Cloud IA": "Technologie",
+      "Technologie / Semi-conducteurs (holding)": "Technologie",
+      "Cybersécurité": "Technologie",
+      "Composants optiques (photonique)": "Technologie",
+      "Fabrication électronique (serveurs IA)": "Technologie",
+      "Infrastructure IA / Data centers": "Technologie",
+      "Énergie": "Énergie & Utilities",
+      "Raffinage pétrolier": "Énergie & Utilities",
+      "Ingénierie GNL": "Énergie & Utilities",
+      "Infrastructure énergie": "Énergie & Utilities",
+      "Production d'électricité (Utilities)": "Énergie & Utilities",
+      "Assurance": "Finance",
+      "Gestion d'actifs / Private equity": "Finance",
+      "Fintech / Transfert d'argent": "Finance",
+      "Luxe": "Consommation & Médias",
+      "E-commerce (Amérique latine)": "Consommation & Médias",
+      "Communication / Publicité": "Consommation & Médias",
+      "Gaz industriels": "Industrie",
+      "Équipement électrique": "Industrie",
+      "Construction / Concessions": "Industrie",
+      "Or": "Matières premières",
+      "Argent": "Matières premières",
+      "Matières premières agricoles": "Matières premières",
+    };
+    const SECTOR_GROUP_KEYWORDS = [
+      [/techno|semi|logiciel|software|cloud|cyber|\bia\b|data|électronique|photon|internet/i, "Technologie"],
+      [/énergie|energie|pétrol|petrol|gaz naturel|gnl|électricité|electricite|utilit|nucléaire|renouvel/i, "Énergie & Utilities"],
+      [/banque|assurance|financ|fintech|gestion d'actifs|private equity|paiement/i, "Finance"],
+      [/luxe|consomm|commerce|retail|média|media|publicit|distribution|alimentaire/i, "Consommation & Médias"],
+      [/industri|équipement|equipement|construction|aéro|aero|défense|defense|transport|chimie|gaz industriel/i, "Industrie"],
+      [/santé|sante|pharma|biotech|médical|medical/i, "Santé"],
+      [/immobili|foncière|fonciere|reit/i, "Immobilier"],
+      [/\bor\b|argent|métaux|metaux|matières|matieres|agricole|minier|mines/i, "Matières premières"],
+      [/etf|diversifi|indice/i, "ETF diversifiés"],
+    ];
+    function sectorGroup(sector) {
+      if (!sector || sector === "Non classé") return "Non classé";
+      if (SECTOR_GROUP_EXACT[sector]) return SECTOR_GROUP_EXACT[sector];
+      const hit = SECTOR_GROUP_KEYWORDS.find(([re]) => re.test(sector));
+      return hit ? hit[1] : "Autres";
+    }
+
+    function aggregateSectors(positions) {
+      const totalValue = positions.reduce((s, p) => s + p.quantity * p.lastPrice, 0);
+      const groups = {};
+      positions.forEach((p) => {
+        const v = p.quantity * p.lastPrice;
+        const g = sectorGroup(p.sector);
+        const sub = p.sector || "Non classé";
+        if (!groups[g]) groups[g] = { key: g, value: 0, count: 0, subs: {} };
+        groups[g].value += v;
+        groups[g].count += 1;
+        groups[g].subs[sub] = (groups[g].subs[sub] || 0) + v;
+      });
+      return Object.values(groups)
+        .map((g) => ({
+          ...g,
+          weight: totalValue ? g.value / totalValue : 0,
+          subs: Object.entries(g.subs)
+            .map(([key, value]) => ({ key, value, weight: totalValue ? value / totalValue : 0 }))
+            .sort((a, b) => b.value - a.value),
+        }))
+        .sort((a, b) => b.value - a.value);
+    }
+
+    function aggregatePositions(positions, key) {
+      const totalValue = positions.reduce((s, p) => s + p.quantity * p.lastPrice, 0);
+      const groups = {};
+      positions.forEach((p) => {
+        const k = p[key] || "Non classé";
+        if (!groups[k]) groups[k] = { key: k, value: 0, count: 0 };
+        groups[k].value += p.quantity * p.lastPrice;
+        groups[k].count += 1;
+      });
+      return Object.values(groups)
+        .map((g) => ({ ...g, weight: totalValue ? g.value / totalValue : 0 }))
+        .sort((a, b) => b.value - a.value);
+    }
+
+    function num(raw) {
+      if (raw === null || raw === undefined || raw === "") return NaN;
+      if (typeof raw === "number") return isFinite(raw) ? raw : NaN;
+      let s = String(raw).trim().replace(/[\u00A0\u202F]/g, " ");
+      const negative = /^\(.*\)$/.test(s) || s.startsWith("-");
+      s = s.replace(/[()€$£%\s]/g, "").replace(/^-/, "");
+      const dernierPoint = s.lastIndexOf(".");
+      const derniereVirgule = s.lastIndexOf(",");
+      if (dernierPoint >= 0 && derniereVirgule >= 0) {
+        const dec = dernierPoint > derniereVirgule ? "." : ",";
+        const mil = dec === "." ? "," : ".";
+        s = s.split(mil).join("").replace(dec, ".");
+      } else if (dernierPoint >= 0 || derniereVirgule >= 0) {
+        const sep = dernierPoint >= 0 ? "." : ",";
+        const parts = s.split(sep);
+        const milliers =
+          parts.length > 2 ||
+          (parts.length === 2 && parts[1].length === 3 && parts[0].length <= 3 && parts[0] !== "0" && /^\d+$/.test(parts[1]));
+        s = milliers ? parts.join("") : parts.join(".");
+      }
+      const n = parseFloat(s);
+      if (!isFinite(n)) return NaN;
+      return negative ? -n : n;
+    }
+
+    function splitCSVLine(line, sep) {
+      const cells = [];
+      let cur = "";
+      let inQuotes = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (inQuotes) {
+          if (ch === '"') {
+            if (line[i + 1] === '"') { cur += '"'; i++; } else { inQuotes = false; }
+          } else {
+            cur += ch;
+          }
+        } else if (ch === '"') {
+          inQuotes = true;
+        } else if (ch === sep) {
+          cells.push(cur.trim());
+          cur = "";
+        } else {
+          cur += ch;
+        }
+      }
+      cells.push(cur.trim());
+      return cells;
+    }
+
+    function parseCSV(text) {
+      const lines = text.split(/\r\n|\n|\r/).filter((l) => l.trim() !== "");
+      if (lines.length === 0) return { headers: [], rows: [] };
+      const candidates = ["\t", ";", ",", "|"];
+      let bestSep = ";", bestScore = -1;
+      candidates.forEach((sep) => {
+        const counts = lines.slice(0, 20).map((l) => splitCSVLine(l, sep).length);
+        const avg = counts.reduce((a, b) => a + b, 0) / counts.length;
+        const variance = counts.reduce((a, b) => a + (b - avg) ** 2, 0) / counts.length;
+        const score = avg > 1 ? avg - variance : -1;
+        if (score > bestScore) { bestScore = score; bestSep = sep; }
+      });
+      const grid = lines.map((l) => splitCSVLine(l, bestSep));
+      const [headers, ...rows] = grid;
+      return { headers, rows, separator: bestSep };
+    }
+
+    async function readFileAsRows(file) {
+      const name = file.name.toLowerCase();
+      if (name.endsWith(".csv") || name.endsWith(".txt") || name.endsWith(".tsv")) {
+        return parseCSV(await file.text());
+      }
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const grid = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, raw: true });
+      const headers = (grid[0] || []).map((h) => (h === null || h === undefined ? "" : String(h)));
+      const rows = grid.slice(1).map((r) => headers.map((_, i) => (r[i] === null || r[i] === undefined ? "" : r[i])));
+      return { headers, rows };
+    }
+
+    const KNOWN_SECURITIES = {
+      IE00B4ND3602: { sector: "Or", category: "Swing" },
+      US30303M1027: { sector: "Technologie", category: "Fond de portefeuille" },
+      US5951121038: { sector: "Semi-conducteurs", category: "Swing" },
+      US67066G1040: { sector: "Semi-conducteurs", category: "Swing" },
+      JE00BN7KB441: { sector: "Matières premières agricoles", category: "Spéculatif" },
+      GB00B15KY328: { sector: "Argent", category: "Swing" },
+      IE00BM67HM91: { sector: "Énergie", category: "Swing" },
+      DE0008404005: { sector: "Assurance", category: "Fond de portefeuille" },
+      DE000A255F11: { sector: "Infrastructure énergie", category: "Swing" },
+      FR0000121014: { sector: "Luxe", category: "Fond de portefeuille" },
+      NL0009805522: { sector: "Technologie / Cloud IA", category: "Spéculatif" },
+      FR0000130577: { sector: "Communication / Publicité", category: "Fond de portefeuille" },
+      FR0013412012: { sector: "ETF diversifié — marchés émergents", category: "Fond de portefeuille" },
+      NL0010273215: { sector: "Semi-conducteurs", category: "Fond de portefeuille" },
+      FR0011550185: { sector: "ETF diversifié — actions US", category: "Fond de portefeuille" },
+      FR0011726835: { sector: "Ingénierie GNL", category: "Swing" },
+      FR0000120073: { sector: "Gaz industriels", category: "Fond de portefeuille" },
+      FR0000121972: { sector: "Équipement électrique", category: "Fond de portefeuille" },
+      FR0000120271: { sector: "Énergie", category: "Fond de portefeuille" },
+      FR0000125486: { sector: "Construction / Concessions", category: "Fond de portefeuille" },
+      "3231": { sector: "Fabrication électronique (serveurs IA)", category: "Swing" },
+      "402340": { sector: "Technologie / Semi-conducteurs (holding)", category: "Swing" },
+      HLNE: { sector: "Gestion d'actifs / Private equity", category: "Fond de portefeuille" },
+      KEEL: { sector: "Infrastructure IA / Data centers", category: "Spéculatif" },
+      LITE: { sector: "Composants optiques (photonique)", category: "Swing" },
+      MELI: { sector: "E-commerce (Amérique latine)", category: "Swing" },
+      MSFT: { sector: "Technologie", category: "Fond de portefeuille" },
+      PSX: { sector: "Raffinage pétrolier", category: "Fond de portefeuille" },
+      RELY: { sector: "Fintech / Transfert d'argent", category: "Swing" },
+      VST: { sector: "Production d'électricité (Utilities)", category: "Swing" },
+      ZS: { sector: "Cybersécurité", category: "Swing" },
+      META: { sector: "Technologie", category: "Fond de portefeuille" },
+    };
+
+    function parsePositionsFromRows(headers, rows, accountId) {
+      const find = (re) => headers.findIndex((h) => re.test(h));
+      const nameCol = find(/nom|produit|libell[ée]/i);
+      const isinCol = find(/isin/i);
+      const coursCol = find(/cours|cl[oô]ture|dernier|prix.*march/i);
+      const deviseCol = find(/devise|currency/i);
+      const qteCol = find(/qu?ant/i);
+      const pruCol = find(/pru|prix.*revient|co[uû]t.*revient/i);
+      const valeurCol = find(/valo|valeur|montant/i);
+      if (qteCol < 0) return [];
+
+      return rows
+        .filter((r) => r.some((c) => c !== "" && c !== null && c !== undefined))
+        .map((r, i) => {
+          const quantity = num(r[qteCol]) || 0;
+          const costBasis = pruCol >= 0 ? num(r[pruCol]) || 0 : 0;
+          let lastPrice = NaN;
+          if (valeurCol >= 0 && quantity) {
+            const valeur = num(r[valeurCol]);
+            if (!isNaN(valeur)) lastPrice = valeur / quantity;
+          }
+          if (isNaN(lastPrice) && coursCol >= 0) lastPrice = num(r[coursCol]);
+          const rawName = (nameCol >= 0 ? r[nameCol] : "") || (isinCol >= 0 ? r[isinCol] : "") || `Ligne ${i + 1}`;
+          const name = String(rawName);
+          const ticker = isinCol >= 0 && r[isinCol] ? String(r[isinCol]) : name.split(" ")[0].toUpperCase().slice(0, 12);
+          const known = KNOWN_SECURITIES[ticker];
+          return {
+            id: `${accountId}-${i}-${Date.now()}`,
+            accountId,
+            ticker,
+            name,
+            quantity,
+            costBasis,
+            lastPrice: isFinite(lastPrice) ? lastPrice : 0,
+            currency: deviseCol >= 0 && r[deviseCol] ? String(r[deviseCol]) : "EUR",
+            category: known?.category || "Non classé",
+            sector: known?.sector || "Non classé",
+          };
+        })
+        .filter((p) => p.quantity);
+    }
+
+    const fmtEUR = (v) => new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(v || 0);
+    const fmtEURcents = (v) => new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format(v || 0);
+    const fmtPct = (v) => `${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)} %`;
+    const fmtDate = (iso) => new Date(iso).toLocaleDateString("fr-FR", { day: "2-digit", month: "short" });
+
+    const accounts = [
+      { id: "cto", name: "CTO Degiro", type: "bourse", currency: "EUR" },
+      { id: "ibkr", name: "IBKR", type: "bourse", currency: "EUR" },
+      { id: "pea_phil", name: "PEA Phil", type: "bourse", currency: "EUR" },
+      { id: "pea_ghiz", name: "PEA Ghiz", type: "bourse", currency: "EUR" },
+      { id: "nalo_phil", name: "NALO Phil", type: "epargne_pilotee", currency: "EUR" },
+      { id: "nalo_ghiz", name: "NALO Ghiz", type: "epargne_pilotee", currency: "EUR" },
+      { id: "pee", name: "PEE", type: "epargne_salariale", currency: "EUR" },
+      { id: "lcl", name: "LCL", type: "liquidites", currency: "EUR" },
+      { id: "revolut", name: "Revolut", type: "liquidites", currency: "EUR" },
+      { id: "gold", name: "Gold", type: "or", currency: "EUR" },
+      { id: "la_premiere_brique", name: "La Première Brique", type: "crowdfunding_immo", currency: "EUR" },
+      { id: "homunity", name: "Homunity", type: "crowdfunding_immo", currency: "EUR" },
+      { id: "scpi", name: "SCPI", type: "immobilier", currency: "EUR" },
+      { id: "binance", name: "Binance", type: "crypto", currency: "EUR" },
+      { id: "finary", name: "Finary", type: "autre", currency: "EUR" },
+    ];
+    const BOURSE_ACCOUNTS = accounts.filter((a) => a.type === "bourse");
+    const EXTERNAL_ACCOUNT = { id: "externe", name: "Externe (hors patrimoine suivi)" };
+    const TRANSFER_ACCOUNTS = [EXTERNAL_ACCOUNT, ...accounts];
+    const transferAccountName = (id) => TRANSFER_ACCOUNTS.find((a) => a.id === id)?.name || id;
+
+    function transferToFlows(tr) {
+      const date = tr.arrivalDate || tr.departureDate;
+      const flows = [];
+      if (tr.sourceAccountId && tr.sourceAccountId !== "externe") {
+        flows.push({ id: `${tr.id}-src`, accountId: tr.sourceAccountId, date, amount: -Math.abs(tr.amount) });
+      }
+      if (tr.destinationAccountId && tr.destinationAccountId !== "externe") {
+        flows.push({ id: `${tr.id}-dst`, accountId: tr.destinationAccountId, date, amount: Math.abs(tr.amount) });
+      }
+      return flows;
+    }
+
+    const stockPositions = [
+      { id: "ibkr-wistron", accountId: "ibkr", ticker: "3231.TW", name: "Wistron Corporation", quantity: 1140, costBasis: 4.4102, lastPrice: 4.914, currency: "TWD", category: "Swing", sector: "Fabrication électronique (serveurs IA)" },
+      { id: "ibkr-sksquare", accountId: "ibkr", ticker: "402340.KS", name: "SK Square", quantity: 8, costBasis: 834.9807, lastPrice: 664.05, currency: "KRW", category: "Swing", sector: "Technologie / Semi-conducteurs (holding)" },
+      { id: "ibkr-hlne", accountId: "ibkr", ticker: "HLNE", name: "Hamilton Lane Incorporated", quantity: 100, costBasis: 94.4564, lastPrice: 77.4123, currency: "USD", category: "Fond de portefeuille", sector: "Gestion d'actifs / Private equity" },
+      { id: "ibkr-keel", accountId: "ibkr", ticker: "KEEL", name: "Keel Infrastructure Corp.", quantity: 2700, costBasis: 3.6055, lastPrice: 3.5665, currency: "USD", category: "Spéculatif", sector: "Infrastructure IA / Data centers" },
+      { id: "ibkr-lite", accountId: "ibkr", ticker: "LITE", name: "Lumentum Holdings", quantity: 17.6004, costBasis: 866.5745, lastPrice: 841.248, currency: "USD", category: "Swing", sector: "Composants optiques (photonique)" },
+      { id: "ibkr-meli", accountId: "ibkr", ticker: "MELI", name: "MercadoLibre", quantity: 5.7849, costBasis: 1690.2744, lastPrice: 1598.6166, currency: "USD", category: "Swing", sector: "E-commerce (Amérique latine)" },
+      { id: "ibkr-meta", accountId: "ibkr", ticker: "META", name: "Meta Platforms", quantity: 30, costBasis: 587.8513, lastPrice: 649.9517, currency: "USD", category: "Fond de portefeuille", sector: "Technologie" },
+      { id: "ibkr-msft", accountId: "ibkr", ticker: "MSFT", name: "Microsoft", quantity: 65, costBasis: 447.9935, lastPrice: 439.0263, currency: "USD", category: "Fond de portefeuille", sector: "Technologie" },
+      { id: "ibkr-psx", accountId: "ibkr", ticker: "PSX", name: "Phillips 66", quantity: 0.2128, costBasis: 220.1626, lastPrice: 227.2509, currency: "USD", category: "Fond de portefeuille", sector: "Raffinage pétrolier" },
+      { id: "ibkr-rely", accountId: "ibkr", ticker: "RELY", name: "Remitly Global", quantity: 440, costBasis: 23.6645, lastPrice: 18.858, currency: "USD", category: "Swing", sector: "Fintech / Transfert d'argent" },
+      { id: "ibkr-vst", accountId: "ibkr", ticker: "VST", name: "Vistra Corp", quantity: 100, costBasis: 125.9594, lastPrice: 124.347, currency: "USD", category: "Swing", sector: "Production d'électricité (Utilities)" },
+      { id: "ibkr-zs", accountId: "ibkr", ticker: "ZS", name: "Zscaler", quantity: 171.5843, costBasis: 168.7153, lastPrice: 181.7797, currency: "USD", category: "Swing", sector: "Cybersécurité" },
+    ];
+
+    const initialMonthlySnapshots = [
+      { id: "m0", date: "2023-08-07T00:00:00.000Z", periode: "2023-08", byAccount: { cto: 67209, ibkr: 0, pea_phil: 67214, pea_ghiz: 0, nalo_phil: 22447, la_premiere_brique: 46000, homunity: 11000, pee: 0, lcl: 77976, revolut: 0, gold: 6000, nalo_ghiz: 0, scpi: 0, binance: 0, finary: 0 }, flows: {  }, totalWealth: 297846, refGainCumule: 1800, refGainEpargneCumule: 1800, source: "csv" },
+      { id: "m1", date: "2023-09-05T00:00:00.000Z", periode: "2023-09", byAccount: { cto: 65976, ibkr: 0, pea_phil: 72950, pea_ghiz: 0, nalo_phil: 22849, la_premiere_brique: 46000, homunity: 11000, pee: 0, lcl: 77479, revolut: 0, gold: 6000, nalo_ghiz: 0, scpi: 0, binance: 0, finary: 0 }, flows: { pea_phil: 4000, nalo_phil: 550 }, totalWealth: 302254, refGainCumule: 2155, refGainEpargneCumule: 2155, source: "csv" },
+      { id: "m2", date: "2023-10-01T00:00:00.000Z", periode: "2023-10", byAccount: { cto: 64054, ibkr: 0, pea_phil: 72442, pea_ghiz: 0, nalo_phil: 23076, la_premiere_brique: 46000, homunity: 11000, pee: 0, lcl: 93524, revolut: 0, gold: 6000, nalo_ghiz: 0, scpi: 0, binance: 0, finary: 0 }, flows: { pea_phil: 2000, nalo_phil: 550 }, totalWealth: 316096, refGainCumule: -2598, refGainEpargneCumule: -2598, source: "csv" },
+      { id: "m3", date: "2023-11-02T00:00:00.000Z", periode: "2023-11", byAccount: { cto: 84544, ibkr: 0, pea_phil: 74510, pea_ghiz: 0, nalo_phil: 23236, la_premiere_brique: 46000, homunity: 11000, pee: 0, lcl: 76909, revolut: 0, gold: 6000, nalo_ghiz: 0, scpi: 0, binance: 2100, finary: 0 }, flows: { cto: 20000, pea_phil: 2000, nalo_phil: 250, binance: 1900 }, totalWealth: 324299, refGainCumule: -30, refGainEpargneCumule: -30, source: "csv" },
+      { id: "m4", date: "2023-11-30T00:00:00.000Z", periode: "2023-11", byAccount: { cto: 86833, ibkr: 0, pea_phil: 76751, pea_ghiz: 0, nalo_phil: 24401, la_premiere_brique: 46000, homunity: 11000, pee: 4000, lcl: 72352, revolut: 0, gold: 6000, nalo_ghiz: 0, scpi: 0, binance: 2400, finary: 0 }, flows: { pea_phil: 2000, nalo_phil: 550, pee: 4000 }, totalWealth: 329737, refGainCumule: 3415, refGainEpargneCumule: 3415, source: "csv" },
+      { id: "m5", date: "2023-12-30T00:00:00.000Z", periode: "2023-12", byAccount: { cto: 89300, ibkr: 0, pea_phil: 81759, pea_ghiz: 0, nalo_phil: 24401, la_premiere_brique: 46000, homunity: 11000, pee: 4000, lcl: 68381, revolut: 0, gold: 6000, nalo_ghiz: 0, scpi: 0, binance: 5364, finary: 0 }, flows: { pea_phil: 2000, nalo_phil: 550, binance: 2000 }, totalWealth: 336205, refGainCumule: 7404, refGainEpargneCumule: 7404, source: "csv" },
+      { id: "m6", date: "2024-01-30T00:00:00.000Z", periode: "2024-01", byAccount: { cto: 89805, ibkr: 0, pea_phil: 89050, pea_ghiz: 0, nalo_phil: 26732, la_premiere_brique: 46000, homunity: 11000, pee: 4000, lcl: 56075, revolut: 3365, gold: 6000, nalo_ghiz: 0, scpi: 0, binance: 4818, finary: 0 }, flows: { cto: 2000, pea_phil: 6000, nalo_phil: 550 }, totalWealth: 336845, refGainCumule: 11800, refGainEpargneCumule: 8435, source: "csv" },
+      { id: "m7", date: "2024-02-29T00:00:00.000Z", periode: "2024-02", byAccount: { cto: 91553, ibkr: 0, pea_phil: 94021, pea_ghiz: 0, nalo_phil: 27601, la_premiere_brique: 46000, homunity: 11000, pee: 4000, lcl: 61082, revolut: 5000, gold: 6000, nalo_ghiz: 0, scpi: 0, binance: 6636, finary: 0 }, flows: { pea_phil: 2000, nalo_phil: 550 }, totalWealth: 352893, refGainCumule: 20291, refGainEpargneCumule: 15291, source: "csv" },
+      { id: "m8", date: "2024-04-06T00:00:00.000Z", periode: "2024-04", byAccount: { cto: 101569, ibkr: 0, pea_phil: 100791, pea_ghiz: 0, nalo_phil: 31352, la_premiere_brique: 46000, homunity: 11000, pee: 8997, lcl: 56627, revolut: 5000, gold: 6000, nalo_ghiz: 0, scpi: 0, binance: 8333, finary: 0 }, flows: { cto: 5000, pea_phil: 2000, nalo_phil: 3050, binance: 1000, pee: 2700 }, totalWealth: 375669, refGainCumule: 33773, refGainEpargneCumule: 28773, source: "csv" },
+      { id: "m9", date: "2024-05-06T00:00:00.000Z", periode: "2024-05", byAccount: { cto: 107640, ibkr: 0, pea_phil: 102884, pea_ghiz: 0, nalo_phil: 31364, la_premiere_brique: 46000, homunity: 11000, pee: 15500, lcl: 50487, revolut: 14500, gold: 6000, nalo_ghiz: 0, scpi: 0, binance: 6843, finary: 0 }, flows: { cto: 4000, pea_phil: 2000, nalo_phil: 550, pee: 4300 }, totalWealth: 392218, refGainCumule: 45611, refGainEpargneCumule: 31111, source: "csv" },
+      { id: "m10", date: "2024-06-24T00:00:00.000Z", periode: "2024-06", byAccount: { cto: 110546, ibkr: 0, pea_phil: 106960, pea_ghiz: 0, nalo_phil: 33675, la_premiere_brique: 46000, homunity: 11000, pee: 17999, lcl: 46083, revolut: 8948, gold: 6000, nalo_ghiz: 0, scpi: 0, binance: 6545, finary: 0 }, flows: { pea_phil: 2000, nalo_phil: 550 }, totalWealth: 393756, refGainCumule: 49003, refGainEpargneCumule: 40055, source: "csv" },
+      { id: "m11", date: "2024-07-06T00:00:00.000Z", periode: "2024-07", byAccount: { cto: 113727, ibkr: 0, pea_phil: 111025, pea_ghiz: 0, nalo_phil: 33490, la_premiere_brique: 46000, homunity: 11000, pee: 17999, lcl: 53875, revolut: 10866, gold: 6000, nalo_ghiz: 0, scpi: 0, binance: 5818, finary: 0 }, flows: { pea_phil: 2000, nalo_phil: 550 }, totalWealth: 409800, refGainCumule: 54705, refGainEpargneCumule: 43839, source: "csv" },
+      { id: "m12", date: "2024-09-22T00:00:00.000Z", periode: "2024-09", byAccount: { cto: 114126, ibkr: 0, pea_phil: 114116, pea_ghiz: 0, nalo_phil: 35862, la_premiere_brique: 51794, homunity: 11000, pee: 17298, lcl: 60511, revolut: 13900, gold: 6000, nalo_ghiz: 0, scpi: 0, binance: 5818, finary: 0 }, flows: { pea_phil: 6000, nalo_phil: 1650, la_premiere_brique: 5000 }, totalWealth: 430425, refGainCumule: 56044, refGainEpargneCumule: 42144, source: "csv" },
+      { id: "m13", date: "2024-10-28T00:00:00.000Z", periode: "2024-10", byAccount: { cto: 119480, ibkr: 0, pea_phil: 112314, pea_ghiz: 0, nalo_phil: 37108, la_premiere_brique: 51794, homunity: 11000, pee: 16632, lcl: 60891, revolut: 13417, gold: 6000, nalo_ghiz: 0, scpi: 0, binance: 6364, finary: 0 }, flows: { pea_phil: 2000, nalo_phil: 550 }, totalWealth: 435000, refGainCumule: 57689, refGainEpargneCumule: 44272, source: "csv" },
+      { id: "m14", date: "2024-11-16T00:00:00.000Z", periode: "2024-11", byAccount: { cto: 152651, ibkr: 0, pea_phil: 112040, pea_ghiz: 0, nalo_phil: 38537, la_premiere_brique: 51794, homunity: 11000, pee: 16816, lcl: 60891, revolut: 13417, gold: 9000, nalo_ghiz: 0, scpi: 0, binance: 24473, finary: 0 }, flows: { cto: 25000, pea_phil: 2000, nalo_phil: 550, binance: 15000 }, totalWealth: 490619, refGainCumule: 70758, refGainEpargneCumule: 57341, source: "csv" },
+      { id: "m15", date: "2024-11-30T00:00:00.000Z", periode: "2024-11", byAccount: { cto: 149418, ibkr: 0, pea_phil: 112130, pea_ghiz: 0, nalo_phil: 38711, la_premiere_brique: 51794, homunity: 11000, pee: 16816, lcl: 42329, revolut: 18679, gold: 9000, nalo_ghiz: 0, scpi: 0, binance: 25234, finary: 0 }, flows: { pea_phil: 2000 }, totalWealth: 475111, refGainCumule: 71812, refGainEpargneCumule: 53133, source: "csv" },
+      { id: "m16", date: "2024-12-31T00:00:00.000Z", periode: "2024-12", byAccount: { cto: 149196, ibkr: 0, pea_phil: 113070, pea_ghiz: 0, nalo_phil: 39301, la_premiere_brique: 51794, homunity: 11000, pee: 16321, lcl: 47875, revolut: 17170, gold: 9000, nalo_ghiz: 0, scpi: 0, binance: 31734, finary: 0 }, flows: { pea_phil: 2212, nalo_phil: 550, binance: 5000 }, totalWealth: 486461, refGainCumule: 69854, refGainEpargneCumule: 52684, source: "csv" },
+      { id: "m17", date: "2025-01-30T00:00:00.000Z", periode: "2025-01", byAccount: { cto: 160762, ibkr: 0, pea_phil: 122956, pea_ghiz: 0, nalo_phil: 40362, la_premiere_brique: 51794, homunity: 11000, pee: 16321, lcl: 44517, revolut: 14740, gold: 9000, nalo_ghiz: 0, scpi: 0, binance: 29421, finary: 0 }, flows: { pea_phil: 6000, nalo_phil: 550, la_premiere_brique: 3000 }, totalWealth: 500873, refGainCumule: 81075, refGainEpargneCumule: 66335, source: "csv" },
+      { id: "m18", date: "2025-03-03T00:00:00.000Z", periode: "2025-03", byAccount: { cto: 155362, ibkr: 0, pea_phil: 130581, pea_ghiz: 0, nalo_phil: 40958, la_premiere_brique: 54294, homunity: 11000, pee: 16321, lcl: 37409, revolut: 18394, gold: 9000, nalo_ghiz: 0, scpi: 0, binance: 27885, finary: 0 }, flows: { pea_phil: 7000, nalo_phil: 550, la_premiere_brique: 2500, binance: 2000 }, totalWealth: 501204, refGainCumule: 76463, refGainEpargneCumule: 58069, source: "csv" },
+      { id: "m19", date: "2025-03-14T00:00:00.000Z", periode: "2025-03", byAccount: { cto: 146258, ibkr: 0, pea_phil: 128807, pea_ghiz: 0, nalo_phil: 38853, la_premiere_brique: 54294, homunity: 11000, pee: 16321, lcl: 41256, revolut: 17281, gold: 9000, nalo_ghiz: 0, scpi: 0, binance: 24519, finary: 0 }, flows: { pea_phil: 2000, nalo_phil: 550 }, totalWealth: 487589, refGainCumule: 56452, refGainEpargneCumule: 39171, source: "csv" },
+      { id: "m20", date: "2025-05-15T00:00:00.000Z", periode: "2025-05", byAccount: { cto: 171515, ibkr: 0, pea_phil: 137472, pea_ghiz: 0, nalo_phil: 40729, la_premiere_brique: 54294, homunity: 11000, pee: 16321, lcl: 29036, revolut: 16361, gold: 9000, nalo_ghiz: 0, scpi: 0, binance: 27170, finary: 0 }, flows: { cto: 24244, pea_phil: 7000, nalo_phil: 1100 }, totalWealth: 512898, refGainCumule: 61636, refGainEpargneCumule: 45275, source: "csv" },
+      { id: "m21", date: "2025-05-31T00:00:00.000Z", periode: "2025-05", byAccount: { cto: 172487, ibkr: 0, pea_phil: 135174, pea_ghiz: 0, nalo_phil: 40476, la_premiere_brique: 54294, homunity: 11000, pee: 16321, lcl: 30913, revolut: 16361, gold: 9000, nalo_ghiz: 0, scpi: 0, binance: 27170, finary: 0 }, flows: { pea_phil: 2000 }, totalWealth: 513196, refGainCumule: 58057, refGainEpargneCumule: 41696, source: "csv" },
+      { id: "m22", date: "2025-07-13T00:00:00.000Z", periode: "2025-07", byAccount: { cto: 177953, ibkr: 0, pea_phil: 142690, pea_ghiz: 0, nalo_phil: 42013, la_premiere_brique: 58200, homunity: 11300, pee: 26000, lcl: 26199, revolut: 15202, gold: 9000, nalo_ghiz: 0, scpi: 0, binance: 35000, finary: 0 }, flows: { pea_phil: 4000, nalo_phil: 550, binance: 5000 }, totalWealth: 543557, refGainCumule: 83582, refGainEpargneCumule: 68380, source: "csv" },
+      { id: "m23", date: "2025-08-05T00:00:00.000Z", periode: "2025-08", byAccount: { cto: 176435, ibkr: 0, pea_phil: 139779, pea_ghiz: 0, nalo_phil: 42920, la_premiere_brique: 58200, homunity: 29000, pee: 26000, lcl: 17640, revolut: 16646, gold: 9000, nalo_ghiz: 0, scpi: 0, binance: 33636, finary: 0 }, flows: { pea_phil: 2000, nalo_phil: 550, la_premiere_brique: 2000, homunity: 15000 }, totalWealth: 549256, refGainCumule: 78290, refGainEpargneCumule: 61644, source: "csv" },
+      { id: "m24", date: "2025-09-03T00:00:00.000Z", periode: "2025-09", byAccount: { cto: 178029, ibkr: 0, pea_phil: 155252, pea_ghiz: 3791, nalo_phil: 44620, la_premiere_brique: 58200, homunity: 29000, pee: 31823, lcl: 17719, revolut: 262, gold: 9000, nalo_ghiz: 0, scpi: 0, binance: 23633, finary: 27750 }, flows: { pea_phil: 10000, nalo_phil: 1550, pea_ghiz: 2000, binance: -11142, finary: 25640 }, totalWealth: 579079, refGainCumule: 79986, refGainEpargneCumule: 79724, source: "csv" },
+      { id: "m25", date: "2025-10-02T00:00:00.000Z", periode: "2025-10", byAccount: { cto: 206624, ibkr: 0, pea_phil: 161827, pea_ghiz: 3806, nalo_phil: 44881, la_premiere_brique: 58200, homunity: 29983, pee: 32905, lcl: 11992, revolut: 4492, gold: 9000, nalo_ghiz: 0, scpi: 0, binance: 24937, finary: 27417 }, flows: { nalo_phil: 500, la_premiere_brique: 4000, pea_ghiz: 2000 }, totalWealth: 616064, refGainCumule: 116198, refGainEpargneCumule: 111706, source: "csv" },
+      { id: "m26", date: "2025-11-03T00:00:00.000Z", periode: "2025-11", byAccount: { cto: 221507, ibkr: 0, pea_phil: 170130, pea_ghiz: 5941, nalo_phil: 48225, la_premiere_brique: 58200, homunity: 29983, pee: 33354, lcl: 8350, revolut: 4492, gold: 9000, nalo_ghiz: 0, scpi: 0, binance: 23229, finary: 27323 }, flows: { nalo_phil: 500, pea_ghiz: 2000 }, totalWealth: 639734, refGainCumule: 141010, refGainEpargneCumule: 136518, source: "csv" },
+      { id: "m27", date: "2025-12-02T00:00:00.000Z", periode: "2025-12", byAccount: { cto: 210800, ibkr: 0, pea_phil: 169073, pea_ghiz: 7915, nalo_phil: 48225, la_premiere_brique: 63370, homunity: 29983, pee: 37500, lcl: 11724, revolut: 3320, gold: 9000, nalo_ghiz: 0, scpi: 0, binance: 18935, finary: 22540 }, flows: { pea_ghiz: 2000 }, totalWealth: 632385, refGainCumule: 128287, refGainEpargneCumule: 124967, source: "csv" },
+      { id: "m28", date: "2025-12-31T00:00:00.000Z", periode: "2025-12", byAccount: { cto: 224531, ibkr: 0, pea_phil: 169424, pea_ghiz: 36902, nalo_phil: 48719, la_premiere_brique: 63370, homunity: 29983, pee: 38933, lcl: 59889, revolut: 10000, gold: 9000, nalo_ghiz: 0, scpi: 0, binance: 18035, finary: 21350 }, flows: { nalo_phil: 500, pea_ghiz: 28000, pee: 6700 }, totalWealth: 730136, refGainCumule: 142673, refGainEpargneCumule: 132673, source: "csv" },
+      { id: "m29", date: "2026-01-11T00:00:00.000Z", periode: "2026-01", byAccount: { cto: 288811, ibkr: 0, pea_phil: 173606, pea_ghiz: 40151, nalo_phil: 49856, la_premiere_brique: 64232, homunity: 29983, pee: 40286, lcl: 17986, revolut: 4164, gold: 9000, nalo_ghiz: 0, scpi: 0, binance: 20583, finary: 22235 }, flows: { cto: 40000, nalo_phil: 500, la_premiere_brique: -3000, pea_ghiz: 2000, binance: 2000 }, totalWealth: 760893, refGainCumule: 173834, refGainEpargneCumule: 169670, source: "csv" },
+      { id: "m30", date: "2026-02-04T00:00:00.000Z", periode: "2026-02", byAccount: { cto: 288183, ibkr: 0, pea_phil: 183891, pea_ghiz: 39264, nalo_phil: 50252, la_premiere_brique: 64232, homunity: 29983, pee: 40796, lcl: 17939, revolut: 4802, gold: 14000, nalo_ghiz: 0, scpi: 0, binance: 16500, finary: 17565 }, flows: { cto: 5000, nalo_phil: 500 }, totalWealth: 767407, refGainCumule: 174894, refGainEpargneCumule: 170092, source: "csv" },
+      { id: "m31", date: "2026-02-28T00:00:00.000Z", periode: "2026-02", byAccount: { cto: 282146, ibkr: 0, pea_phil: 195059, pea_ghiz: 46190, nalo_phil: 50852, la_premiere_brique: 64232, homunity: 29983, pee: 48939, lcl: 8942, revolut: 11000, gold: 14000, nalo_ghiz: 0, scpi: 0, binance: 14000, finary: 0 }, flows: { cto: 5000, pea_ghiz: 7000, finary: -25640 }, totalWealth: 765343, refGainCumule: 195467, refGainEpargneCumule: 184467, source: "csv" },
+      { id: "m32", date: "2026-03-29T00:00:00.000Z", periode: "2026-03", byAccount: { cto: 269230, ibkr: 0, pea_phil: 190904, pea_ghiz: 49795, nalo_phil: 48701, la_premiere_brique: 64232, homunity: 29983, pee: 44954, lcl: 13597, revolut: 12138, gold: 12000, nalo_ghiz: 0, scpi: 0, binance: 13100, finary: 0 }, flows: { nalo_phil: 500, la_premiere_brique: -3000, pea_ghiz: 7000 }, totalWealth: 748634, refGainCumule: 169603, refGainEpargneCumule: 157465, source: "csv" },
+      { id: "m33", date: "2026-04-08T00:00:00.000Z", periode: "2026-04", byAccount: { cto: 288000, ibkr: 0, pea_phil: 204000, pea_ghiz: 54500, nalo_phil: 48701, la_premiere_brique: 61479, homunity: 29983, pee: 44954, lcl: 21809, revolut: 5608, gold: 12000, nalo_ghiz: 0, scpi: 0, binance: 13100, finary: 0 }, flows: { cto: 10000, pea_ghiz: 2000 }, totalWealth: 784134, refGainCumule: 187891, refGainEpargneCumule: 182283, source: "csv" },
+      { id: "m34", date: "2026-04-18T00:00:00.000Z", periode: "2026-04", byAccount: { cto: 318185, ibkr: 0, pea_phil: 212586, pea_ghiz: 65828, nalo_phil: 51695, la_premiere_brique: 61479, homunity: 29983, pee: 54185, lcl: 9650, revolut: 5948, gold: 12000, nalo_ghiz: 0, scpi: 0, binance: 13800, finary: 0 }, flows: { cto: 10000, pea_ghiz: 5000, pee: 5000 }, totalWealth: 835339, refGainCumule: 206255, refGainEpargneCumule: 225307, source: "csv" },
+      { id: "m35", date: "2026-04-26T00:00:00.000Z", periode: "2026-04", byAccount: { cto: 318185, ibkr: 0, pea_phil: 212586, pea_ghiz: 65828, nalo_phil: 51695, la_premiere_brique: 61479, homunity: 29983, pee: 54185, lcl: 9650, revolut: 5948, gold: 12000, nalo_ghiz: 0, scpi: 0, binance: 13800, finary: 0 }, flows: {  }, totalWealth: 835339, refGainCumule: 206255, refGainEpargneCumule: 225307, source: "csv" },
+      { id: "m36", date: "2026-05-01T00:00:00.000Z", periode: "2026-05", byAccount: { cto: 324005, ibkr: 0, pea_phil: 217472, pea_ghiz: 65077, nalo_phil: 53572, la_premiere_brique: 61479, homunity: 29983, pee: 53748, lcl: 13708, revolut: 5948, gold: 12000, nalo_ghiz: 0, scpi: 0, binance: 14167, finary: 0 }, flows: { nalo_phil: 500 }, totalWealth: 851159, refGainCumule: 210517, refGainEpargneCumule: 204569, source: "csv" },
+      { id: "m37", date: "2026-05-20T00:00:00.000Z", periode: "2026-05", byAccount: { cto: 341616, ibkr: 20810, pea_phil: 225259, pea_ghiz: 64890, nalo_phil: 53572, la_premiere_brique: 59914, homunity: 29983, pee: 53748, lcl: 7253, revolut: 3775, gold: 12000, nalo_ghiz: 0, scpi: 0, binance: 14240, finary: 0 }, flows: { la_premiere_brique: -2300, ibkr: 22000, pee: 5000 }, totalWealth: 887060, refGainCumule: 229363, refGainEpargneCumule: 225588, source: "csv" },
+      { id: "m38", date: "2026-05-28T00:00:00.000Z", periode: "2026-05", byAccount: { cto: 365562, ibkr: 23310, pea_phil: 232538, pea_ghiz: 65608, nalo_phil: 57027, la_premiere_brique: 59914, homunity: 29983, pee: 56000, lcl: 9329, revolut: 2300, gold: 12000, nalo_ghiz: 0, scpi: 0, binance: 14240, finary: 0 }, flows: { nalo_phil: 500, pea_ghiz: 2000 }, totalWealth: 927811, refGainCumule: 266648, refGainEpargneCumule: 264348, source: "csv" },
+      { id: "m39", date: "2026-07-25T00:00:00.000Z", periode: "2026-07", byAccount: { cto: 292446, ibkr: 20850, pea_phil: 225670, pea_ghiz: 81396, nalo_phil: 57208, la_premiere_brique: 60398, homunity: 29983, pee: 52000, lcl: 6306, revolut: 9871, gold: 9000, nalo_ghiz: 0, scpi: 0, binance: 10960, finary: 0 }, flows: { cto: 5000, nalo_phil: 1000, ibkr: 3000, pea_ghiz: 23000 }, totalWealth: 856088, refGainCumule: 165948, refGainEpargneCumule: 156077, source: "csv" },
+      { id: "m40", date: "2026-09-13T00:00:00.000Z", periode: "2026-09", byAccount: { cto: 103521, ibkr: 144800, pea_phil: 227074, pea_ghiz: 89273, nalo_phil: 58586, la_premiere_brique: 60398, homunity: 29983, pee: 52000, lcl: 81971, revolut: 5600, gold: 9000, nalo_ghiz: 0, scpi: 0, binance: 0, finary: 0 }, flows: { cto: -195000, nalo_phil: 1000, ibkr: 125000, pea_ghiz: 6000 }, totalWealth: 862206, refGainCumule: 159401, refGainEpargneCumule: 153801, source: "csv" },
+    ];
+
+    const initialTransfers = [];
+
+    async function fetchIBKRLive() {
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 500,
+          messages: [
+            {
+              role: "user",
+              content:
+                "Utilise l'outil IBKR disponible pour récupérer le résumé de compte (net liquidation, " +
+                "cash total, valeur des positions, devise). Réponds UNIQUEMENT avec un objet JSON strict, " +
+                "sans texte autour et sans balises markdown, au format exact : " +
+                '{"netLiquidation":0,"totalCashValue":0,"grossPositionValue":0,"currency":"EUR"}',
+            },
+          ],
+          mcp_servers: [{ type: "url", url: "https://api.ibkr.com/v1/api/mcp", name: "ibkr-mcp" }],
+        }),
+      });
+      if (!response.ok) throw new Error(`Requête API refusée (HTTP ${response.status})`);
+      const data = await response.json();
+      const textBlocks = (data.content || [])
+        .filter((b) => b.type === "text")
+        .map((b) => b.text)
+        .join("\n");
+      const cleaned = textBlocks.replace(/```json|```/g, "").trim();
+      const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error("Réponse inattendue du connecteur IBKR.");
+      const parsed = JSON.parse(jsonMatch[0]);
+      return { ...parsed, asOf: new Date().toISOString().slice(0, 10) };
+    }
+
+    const THEMES = {
+      dark: {
+        bg: "#14171C", panel: "#1B1F27", panelAlt: "#20242E", border: "#2C313D",
+        text: "#EDEAE3", textMuted: "#B6BECE", accent: "#E0B93A",
+        gain: "#3DD68C", loss: "#E5605A", capital: "#4EA8DE", cash: "#F2B84B",
+        swing: "#9B8CE8", spec: "#E5605A", core: "#4EA8DE",
+      },
+      light: {
+        bg: "#F5F4F0", panel: "#FFFFFF", panelAlt: "#F0EEE8", border: "#E2E0D9",
+        text: "#1B1E24", textMuted: "#4B5262", accent: "#B8901F",
+        gain: "#1FAF6B", loss: "#D1453D", capital: "#2E7FD1", cash: "#D99A2B",
+        swing: "#7A63D6", spec: "#D1453D", core: "#2E7FD1",
+      },
+    };
+    const ThemeCtx = createContext(THEMES.dark);
+    const SECTOR_PALETTE = (t) => [t.capital, t.gain, t.cash, t.swing, t.loss, "#2BC4C4", "#E87BB5", "#8FBF3F", t.textMuted];
+    const useTheme = () => useContext(ThemeCtx);
+
+    const CATEGORY_COLOR = (t) => ({
+      "Fond de portefeuille": t.core, "Swing": t.swing, "Spéculatif": t.spec, "Non classé": t.textMuted,
+    });
+
+    function KPICard({ icon: Icon, label, value, sub, highlight, tone }) {
+      const t = useTheme();
+      const toneColor = tone === "up" ? t.gain : tone === "down" ? t.loss : t.text;
+      return (
+        <div
+          className="flex-1 min-w-[200px] rounded-lg p-5"
+          style={{
+            background: t.panel,
+            border: `1px solid ${t.border}`,
+            borderLeft: highlight ? `3px solid ${t.accent}` : `1px solid ${t.border}`,
+          }}
+        >
+          <div className="flex items-center gap-2 mb-3">
+            <Icon size={16} color={t.textMuted} />
+            <span className="text-sm" style={{ color: t.textMuted }}>{label}</span>
+          </div>
+          <div className={highlight ? "text-3xl" : "text-2xl"} style={{ color: toneColor, fontFamily: "ui-monospace, monospace" }}>
+            {value}
+          </div>
+          {sub && <div className="text-xs mt-2" style={{ color: t.textMuted }}>{sub}</div>}
+        </div>
+      );
+    }
+
+    function Panel({ title, action, children, collapsible, defaultCollapsed }) {
+      const t = useTheme();
+      const [collapsed, setCollapsed] = useState(!!defaultCollapsed);
+      return (
+        <div className="rounded-lg p-5" style={{ background: t.panel, border: `1px solid ${t.border}` }}>
+          <div
+            className={`flex items-center justify-between ${collapsed ? "" : "mb-4"} ${collapsible ? "cursor-pointer select-none" : ""}`}
+            onClick={collapsible ? () => setCollapsed((c) => !c) : undefined}
+          >
+            <h3 className="text-sm tracking-wide flex items-center gap-1" style={{ color: t.textMuted }}>
+              {collapsible && (collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />)}
+              {title}
+            </h3>
+            {action}
+          </div>
+          {!collapsed && children}
+        </div>
+      );
+    }
+
+    function MonthlyEvolutionChart({ data }) {
+      const t = useTheme();
+      const monthLabel = (d) => new Date(d).toLocaleDateString("fr-FR", { month: "short", year: "2-digit" });
+      const kLabel = (v) => `${v >= 0 ? "+" : ""}${Math.round(v / 1000)}k`;
+      const signed = (v) => `${v >= 0 ? "+" : ""}${fmtEUR(v)}`;
+      const chartData = data.map((m) => ({
+        ...m,
+        labelY: m.monthChange >= 0
+          ? Math.max(m.epargne, 0) + Math.max(m.gain, 0)
+          : Math.min(m.epargne, 0) + Math.min(m.gain, 0),
+      }));
+      return (
+        <ResponsiveContainer width="100%" height={360}>
+          <ComposedChart data={chartData} stackOffset="sign" margin={{ top: 20, right: 10, left: 0, bottom: 10 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke={t.border} vertical={false} />
+            <XAxis dataKey="date" tickFormatter={monthLabel} tick={{ fill: t.textMuted, fontSize: 10 }}
+              axisLine={{ stroke: t.border }} tickLine={false} minTickGap={18} />
+            <YAxis yAxisId="left" tickFormatter={(v) => `${Math.round(v / 1000)}k`} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} width={45} />
+            <YAxis yAxisId="right" orientation="right" tickFormatter={(v) => `${Math.round(v / 1000)}k`} tick={{ fill: t.accent, fontSize: 11 }} axisLine={false} tickLine={false} width={45} />
+            <ReferenceLine yAxisId="left" y={0} stroke={t.textMuted} strokeWidth={1} />
+            <Tooltip
+              contentStyle={{ background: t.panelAlt, border: `1px solid ${t.border}`, borderRadius: 6, fontSize: 12 }}
+              content={({ active, payload }) => {
+                if (!active || !payload?.length) return null;
+                const p = payload[0].payload;
+                const row = (label, v, color) => (
+                  <div className="flex justify-between gap-4">
+                    <span style={{ color: t.textMuted }}>{label}</span>
+                    <span style={{ color: color || (v >= 0 ? t.gain : t.loss), fontFamily: "ui-monospace, monospace" }}>{signed(v)}</span>
+                  </div>
+                );
+                return (
+                  <div className="rounded p-2 text-xs space-y-1" style={{ background: t.panelAlt, border: `1px solid ${t.border}`, minWidth: 230 }}>
+                    <div style={{ color: t.text }}>{new Date(p.date).toLocaleDateString("fr-FR", { month: "long", year: "numeric" })}</div>
+                    {row(p.epargne >= 0 ? "Gain d'épargne" : "Perte d'épargne", p.epargne)}
+                    <div className="pl-3 text-[11px]" style={{ color: t.textMuted }}>
+                      dont versé sur placements {signed(p.savings)} · trésorerie {signed(p.cash)}
+                    </div>
+                    {row(p.gain >= 0 ? "Gain de placement" : "Perte de placement", p.gain)}
+                    {row(p.monthChange >= 0 ? "Gain du mois" : "Perte du mois", p.monthChange, t.accent)}
+                    <div className="flex justify-between gap-4 pt-1" style={{ borderTop: `1px solid ${t.border}` }}>
+                      <span style={{ color: t.textMuted }}>Total patrimoine</span>
+                      <span style={{ color: t.accent, fontFamily: "ui-monospace, monospace" }}>{fmtEUR(p.wealth)}</span>
+                    </div>
+                  </div>
+                );
+              }}
+            />
+            <Legend
+              formatter={(v) => (v === "epargne" ? "Épargne (versements + trésorerie)" : v === "gain" ? "Placement" : "Total patrimoine")}
+              wrapperStyle={{ fontSize: 12 }}
+            />
+            <Bar yAxisId="left" dataKey="epargne" stackId="month" fill={t.capital} />
+            <Bar yAxisId="left" dataKey="gain" stackId="month" fill={t.gain} />
+            <Line yAxisId="left" dataKey="labelY" stroke="none" legendType="none" isAnimationActive={false} activeDot={false}
+              dot={(props) => {
+                const { cx, cy, payload, index } = props;
+                if (cx == null || cy == null) return <g key={index} />;
+                const up = payload.monthChange >= 0;
+                return (
+                  <text key={index} x={cx} y={up ? cy - 5 : cy + 12} textAnchor="middle" fontSize={10} fontWeight={600} fill={t.accent}>
+                    {kLabel(payload.monthChange)}
+                  </text>
+                );
+              }}
+            />
+            <Line yAxisId="right" type="monotone" dataKey="wealth" stroke={t.accent} strokeWidth={2} dot={false} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      );
+    }
+
+    function YearlyBarChart({ data }) {
+      const t = useTheme();
+      const signed = (v) => `${v >= 0 ? "+" : ""}${fmtEUR(v)}`;
+      return (
+        <ResponsiveContainer width="100%" height={300}>
+          <ComposedChart data={data.map((y) => ({ ...y, labelY: y.wealthChange >= 0 ? Math.max(y.epargne, 0) + Math.max(y.gain, 0) : Math.min(y.epargne, 0) + Math.min(y.gain, 0) }))}
+            stackOffset="sign" margin={{ top: 24, right: 10, left: 0, bottom: 10 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke={t.border} vertical={false} />
+            <XAxis dataKey="year" tick={{ fill: t.textMuted, fontSize: 12 }} axisLine={{ stroke: t.border }} tickLine={false} />
+            <YAxis tickFormatter={(v) => `${Math.round(v / 1000)}k`} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} width={45} />
+            <ReferenceLine y={0} stroke={t.textMuted} strokeWidth={1} />
+            <Tooltip
+              contentStyle={{ background: t.panelAlt, border: `1px solid ${t.border}`, borderRadius: 6, fontSize: 12 }}
+              formatter={(v, name) => [signed(v), name === "epargne" ? (v >= 0 ? "Gain d'épargne" : "Perte d'épargne") : (v >= 0 ? "Gain de placement" : "Perte de placement")]}
+              labelFormatter={(year, payload) => {
+                const total = payload?.[0]?.payload?.wealthChange;
+                return `${year} — ${total >= 0 ? "gain" : "perte"} de l'année ${total !== undefined ? signed(total) : ""}`;
+              }}
+            />
+            <Legend formatter={(v) => (v === "epargne" ? "Épargne (versements + trésorerie)" : "Placement")} wrapperStyle={{ fontSize: 12 }} />
+            <Bar dataKey="epargne" stackId="year" fill={t.capital} />
+            <Bar dataKey="gain" stackId="year" fill={t.gain} />
+            <Line dataKey="labelY" stroke="none" legendType="none" isAnimationActive={false} activeDot={false}
+              dot={(props) => {
+                const { cx, cy, payload, index } = props;
+                if (cx == null || cy == null) return <g key={index} />;
+                const up = payload.wealthChange >= 0;
+                return (
+                  <text key={index} x={cx} y={up ? cy - 6 : cy + 14} textAnchor="middle" fontSize={11} fontWeight={600} fill={t.accent}>
+                    {signed(payload.wealthChange)}
+                  </text>
+                );
+              }}
+            />
+          </ComposedChart>
+        </ResponsiveContainer>
+      );
+    }
+
+    function AccountsEvolutionChart({ series }) {
+      const t = useTheme();
+      const colors = { cto: t.capital, ibkr: t.accent, pea_phil: t.gain, pea_ghiz: t.swing };
+      const labels = { cto: "CTO Degiro", ibkr: "IBKR", pea_phil: "PEA Phil", pea_ghiz: "PEA Ghiz" };
+      const data = series.map((s) => ({ date: s.date, ...s.byAccount }));
+      return (
+        <ResponsiveContainer width="100%" height={300}>
+          <LineChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke={t.border} vertical={false} />
+            <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fill: t.textMuted, fontSize: 10 }} axisLine={{ stroke: t.border }} tickLine={false} minTickGap={25} />
+            <YAxis tickFormatter={(v) => `${Math.round(v / 1000)}k`} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} width={45} />
+            <Tooltip
+              contentStyle={{ background: t.panelAlt, border: `1px solid ${t.border}`, borderRadius: 6, fontSize: 12 }}
+              labelFormatter={fmtDate}
+              formatter={(v, name) => [fmtEUR(v), labels[name] || name]}
+            />
+            <Legend formatter={(v) => labels[v] || v} wrapperStyle={{ fontSize: 12 }} />
+            {Object.keys(colors).map((k) => (
+              <Line key={k} type="monotone" dataKey={k} stroke={colors[k]} strokeWidth={2} dot={false} />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
+      );
+    }
+
+    function AllocationDonut({ data, colorFor }) {
+      const t = useTheme();
+      return (
+        <ResponsiveContainer width="100%" height={200}>
+          <PieChart>
+            <Pie data={data} dataKey="value" nameKey="key" innerRadius={50} outerRadius={78} paddingAngle={2} stroke={t.panel} strokeWidth={2}>
+              {data.map((d, i) => <Cell key={i} fill={colorFor(d.key, i)} />)}
+            </Pie>
+            <Tooltip
+              contentStyle={{ background: t.panelAlt, border: `1px solid ${t.border}`, borderRadius: 6, fontSize: 12 }}
+              formatter={(v, n, p) => [`${fmtEUR(v)} (${(p.payload.weight * 100).toFixed(1)} %)`, p.payload.key]}
+            />
+          </PieChart>
+        </ResponsiveContainer>
+      );
+    }
+
+    function PositionsImport({ onImport }) {
+      const t = useTheme();
+      const [accountId, setAccountId] = useState(BOURSE_ACCOUNTS[0].id);
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState("");
+      const [info, setInfo] = useState("");
+
+      const handleFile = async (file) => {
+        setLoading(true);
+        setError("");
+        setInfo("");
+        try {
+          const { headers, rows } = await readFileAsRows(file);
+          if (!headers || headers.length === 0) throw new Error("fichier vide ou illisible");
+          const newPositions = parsePositionsFromRows(headers, rows, accountId);
+          if (!newPositions.length) throw new Error("aucune ligne de position reconnue dans ce fichier (colonne quantité introuvable ou vide)");
+          onImport(accountId, newPositions);
+          setInfo(`${newPositions.length} lignes importées pour ${accounts.find((a) => a.id === accountId)?.name}.`);
+        } catch (e) {
+          setError(e.message || "lecture impossible");
+        }
+        setLoading(false);
+      };
+
+      return (
+        <div className="rounded-lg p-4 mb-4" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <label className="text-xs block mb-1" style={{ color: t.textMuted }}>Compte</label>
+              <select
+                value={accountId}
+                onChange={(e) => setAccountId(e.target.value)}
+                className="rounded px-2 py-2 text-sm"
+                style={{ background: t.panel, color: t.text, border: `1px solid ${t.border}` }}
+              >
+                {BOURSE_ACCOUNTS.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs block mb-1" style={{ color: t.textMuted }}>Fichier de positions (CSV/TSV/XLSX)</label>
+              <input
+                type="file"
+                accept=".csv,.txt,.tsv,.xlsx,.xls"
+                onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])}
+                className="text-xs"
+                style={{ color: t.text }}
+                disabled={loading}
+              />
+            </div>
+            {loading && <span className="text-xs" style={{ color: t.textMuted }}>Lecture…</span>}
+          </div>
+          <p className="text-xs mt-2" style={{ color: t.textMuted }}>
+            Remplace les positions déjà importées pour ce compte — les autres comptes ne sont pas touchés. Les lignes
+            importées arrivent en catégorie/secteur « Non classé » : à préciser dans le tableau ci-dessous.
+          </p>
+          {info && <p className="text-xs mt-1" style={{ color: t.gain }}>{info}</p>}
+          {error && <p className="text-xs mt-1" style={{ color: t.loss }}>{error}</p>}
+        </div>
+      );
+    }
+
+    function CategoryBadge({ category }) {
+      const t = useTheme();
+      const color = CATEGORY_COLOR(t)[category] || t.textMuted;
+      return (
+        <span
+          className="inline-flex items-center px-2 py-0.5 rounded text-xs"
+          style={{ color, background: `${color}22`, border: `1px solid ${color}55` }}
+        >
+          {category}
+        </span>
+      );
+    }
+
+    function StatusBadge({ status }) {
+      const t = useTheme();
+      const isValid = status === "valide";
+      const color = isValid ? t.gain : t.accent;
+      return (
+        <span
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs"
+          style={{ color, background: `${color}22`, border: `1px solid ${color}55` }}
+        >
+          {isValid ? <Check size={11} /> : <Clock size={11} />}
+          {isValid ? "Reçu" : "En attente"}
+        </span>
+      );
+    }
+
+    function PositionsTable({ positions, onUpdate }) {
+      const t = useTheme();
+      const [groupBy, setGroupBy] = useState("category");
+      const [expanded, setExpanded] = useState({});
+      const [sortKey, setSortKey] = useState("value");
+      const [sortDir, setSortDir] = useState("desc");
+      const [filterCat, setFilterCat] = useState("all");
+      const [filterAccount, setFilterAccount] = useState("all");
+      const [selected, setSelected] = useState(() => new Set());
+      const [bulkCategory, setBulkCategory] = useState("Fond de portefeuille");
+      const [bulkSector, setBulkSector] = useState("");
+
+      const toggleSelected = (id) =>
+        setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+      const enriched = useMemo(() => {
+        const totalValue = positions.reduce((s, p) => s + p.quantity * p.lastPrice, 0);
+        return positions.map((p) => {
+          const value = p.quantity * p.lastPrice;
+          const costTotal = p.quantity * p.costBasis;
+          const pnl = value - costTotal;
+          const pnlPct = costTotal ? pnl / costTotal : 0;
+          return { ...p, value, pnl, pnlPct, weight: totalValue ? value / totalValue : 0 };
+        });
+      }, [positions]);
+
+      const filtered = enriched
+        .filter((p) => filterCat === "all" || p.category === filterCat)
+        .filter((p) => filterAccount === "all" || p.accountId === filterAccount);
+
+      const sorted = useMemo(() => {
+        const arr = [...filtered];
+        arr.sort((a, b) => {
+          const dir = sortDir === "asc" ? 1 : -1;
+          const av = a[sortKey], bv = b[sortKey];
+          return typeof av === "string" ? av.localeCompare(bv) * dir : (av - bv) * dir;
+        });
+        return arr;
+      }, [filtered, sortKey, sortDir]);
+
+      const groups = useMemo(() => {
+        if (groupBy === "none") return { "Toutes les lignes": sorted };
+        const g = {};
+        sorted.forEach((p) => {
+          const k = groupBy === "sector" ? sectorGroup(p.sector) : p[groupBy] || "Non classé";
+          (g[k] = g[k] || []).push(p);
+        });
+        return g;
+      }, [sorted, groupBy]);
+
+      const toggleSort = (key) => {
+        if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+        else { setSortKey(key); setSortDir("desc"); }
+      };
+
+      const totalPortfolio = enriched.reduce((s, p) => s + p.value, 0);
+      const categories = ["Fond de portefeuille", "Swing", "Spéculatif", "Non classé"];
+
+      const Th = ({ label, k, className }) => (
+        <th
+          className={`text-left font-normal cursor-pointer select-none py-2 px-3 ${className || ""}`}
+          style={{ color: t.textMuted }}
+          onClick={() => toggleSort(k)}
+        >
+          {label}{sortKey === k ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
+        </th>
+      );
+
+      return (
+        <div>
+          <div className="flex flex-wrap items-center gap-3 mb-4">
+            <span className="text-xs" style={{ color: t.textMuted }}>Grouper par</span>
+            {["category", "sector", "none"].map((g) => (
+              <button
+                key={g}
+                onClick={() => setGroupBy(g)}
+                className="text-xs px-3 py-1 rounded"
+                style={{
+                  background: groupBy === g ? t.accent : "transparent",
+                  color: groupBy === g ? t.bg : t.textMuted,
+                  border: `1px solid ${groupBy === g ? t.accent : t.border}`,
+                }}
+              >
+                {g === "category" ? "Catégorie" : g === "sector" ? "Secteur" : "Aucun"}
+              </button>
+            ))}
+            <span className="text-xs ml-4" style={{ color: t.textMuted }}>Filtrer</span>
+            <select
+              value={filterCat}
+              onChange={(e) => setFilterCat(e.target.value)}
+              className="text-xs px-2 py-1 rounded"
+              style={{ background: t.panelAlt, color: t.text, border: `1px solid ${t.border}` }}
+            >
+              <option value="all">Toutes catégories</option>
+              {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <select
+              value={filterAccount}
+              onChange={(e) => setFilterAccount(e.target.value)}
+              className="text-xs px-2 py-1 rounded"
+              style={{ background: t.panelAlt, color: t.text, border: `1px solid ${t.border}` }}
+            >
+              <option value="all">Tous les comptes</option>
+              {BOURSE_ACCOUNTS.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+          </div>
+
+          {selected.size > 0 && (
+            <div className="flex flex-wrap items-center gap-2 mb-4 rounded-lg p-3" style={{ background: t.panelAlt, border: `1px solid ${t.accent}55` }}>
+              <span className="text-xs" style={{ color: t.text }}>{selected.size} ligne{selected.size > 1 ? "s" : ""} sélectionnée{selected.size > 1 ? "s" : ""}</span>
+              <select
+                value={bulkCategory}
+                onChange={(e) => setBulkCategory(e.target.value)}
+                className="text-xs px-2 py-1 rounded"
+                style={{ background: t.panel, color: t.text, border: `1px solid ${t.border}` }}
+              >
+                {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <button
+                onClick={() => selected.forEach((id) => onUpdate?.(id, { category: bulkCategory }))}
+                className="text-xs px-3 py-1 rounded"
+                style={{ background: t.accent, color: t.bg }}
+              >
+                Appliquer la catégorie
+              </button>
+              <input
+                type="text"
+                value={bulkSector}
+                onChange={(e) => setBulkSector(e.target.value)}
+                placeholder="Secteur (ex. Technologie)"
+                className="text-xs px-2 py-1 rounded w-40"
+                style={{ background: t.panel, color: t.text, border: `1px solid ${t.border}` }}
+              />
+              <button
+                onClick={() => { if (bulkSector.trim()) selected.forEach((id) => onUpdate?.(id, { sector: bulkSector.trim() })); }}
+                className="text-xs px-3 py-1 rounded"
+                style={{ background: t.accent, color: t.bg }}
+              >
+                Appliquer le secteur
+              </button>
+              <button
+                onClick={() => setSelected(new Set())}
+                className="text-xs px-2 py-1 rounded ml-auto"
+                style={{ color: t.textMuted, border: `1px solid ${t.border}` }}
+              >
+                Désélectionner tout
+              </button>
+            </div>
+          )}
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm" style={{ fontFamily: "ui-monospace, monospace" }}>
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${t.border}` }}>
+                  <th className="py-2 px-3">
+                    <input
+                      type="checkbox"
+                      checked={sorted.length > 0 && sorted.every((p) => selected.has(p.id))}
+                      onChange={(e) =>
+                        setSelected(e.target.checked ? new Set(sorted.map((p) => p.id)) : new Set())
+                      }
+                    />
+                  </th>
+                  <Th label="Titre" k="name" />
+                  <Th label="Compte" k="accountId" />
+                  <Th label="Qté" k="quantity" />
+                  <Th label="PRU" k="costBasis" />
+                  <Th label="Cours" k="lastPrice" />
+                  <Th label="Valeur" k="value" />
+                  <Th label="+/- value" k="pnl" />
+                  <th className="text-left font-normal py-2 px-3" style={{ color: t.textMuted }}>Catégorie</th>
+                  <th className="text-left font-normal py-2 px-3" style={{ color: t.textMuted }}>Secteur</th>
+                  <Th label="% portef." k="weight" />
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(groups).map(([groupName, rows]) => {
+                  const groupValue = rows.reduce((s, p) => s + p.value, 0);
+                  const groupWeight = totalPortfolio ? groupValue / totalPortfolio : 0;
+                  const isOpen = expanded[groupName] !== false;
+                  return (
+                    <React.Fragment key={groupName}>
+                      {groupBy !== "none" && (
+                        <tr
+                          className="cursor-pointer"
+                          style={{ background: t.panelAlt }}
+                          onClick={() => setExpanded((e) => ({ ...e, [groupName]: !isOpen }))}
+                        >
+                          <td className="py-2 px-3" />
+                          <td className="py-2 px-3 flex items-center gap-1" style={{ color: t.text }} colSpan={1}>
+                            {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                            {groupBy === "category" ? <CategoryBadge category={groupName} /> : groupName}
+                          </td>
+                          <td className="py-2 px-3" style={{ color: t.textMuted }}>{rows.length} lignes</td>
+                          <td className="py-2 px-3" />
+                          <td className="py-2 px-3" />
+                          <td className="py-2 px-3" />
+                          <td className="py-2 px-3" style={{ color: t.text }}>{fmtEUR(groupValue)}</td>
+                          <td className="py-2 px-3" />
+                          <td className="py-2 px-3" />
+                          <td className="py-2 px-3" />
+                          <td className="py-2 px-3" style={{ color: t.accent }}>{(groupWeight * 100).toFixed(1)} %</td>
+                        </tr>
+                      )}
+                      {isOpen && rows.map((p) => (
+                        <tr key={p.id} style={{ borderBottom: `1px solid ${t.border}` }}>
+                          <td className="py-2 px-3" onClick={(e) => e.stopPropagation()}>
+                            <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleSelected(p.id)} />
+                          </td>
+                          <td className="py-2 px-3" style={{ color: t.text }}>
+                            <div className="font-semibold">{p.ticker}</div>
+                            <div className="text-xs" style={{ color: t.textMuted, fontFamily: "ui-sans-serif" }}>{p.name}</div>
+                          </td>
+                          <td className="py-2 px-3 text-xs" style={{ color: t.textMuted, fontFamily: "ui-sans-serif" }}>
+                            {accounts.find((a) => a.id === p.accountId)?.name || p.accountId}
+                          </td>
+                          <td className="py-2 px-3" style={{ color: t.text }}>{p.quantity}</td>
+                          <td className="py-2 px-3" style={{ color: t.textMuted }}>{fmtEURcents(p.costBasis)}</td>
+                          <td className="py-2 px-3" style={{ color: t.text }}>{fmtEURcents(p.lastPrice)}</td>
+                          <td className="py-2 px-3" style={{ color: t.text }}>{fmtEUR(p.value)}</td>
+                          <td className="py-2 px-3" style={{ color: p.pnl >= 0 ? t.gain : t.loss }}>
+                            <div className="flex items-center gap-1">
+                              {p.pnl >= 0 ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
+                              {fmtEUR(p.pnl)} ({fmtPct(p.pnlPct)})
+                            </div>
+                          </td>
+                          <td className="py-2 px-3">
+                            <select
+                              value={p.category}
+                              onChange={(e) => onUpdate?.(p.id, { category: e.target.value })}
+                              className="text-xs rounded px-1 py-1"
+                              style={{ background: t.panelAlt, color: t.text, border: `1px solid ${t.border}`, fontFamily: "ui-sans-serif" }}
+                            >
+                              {["Fond de portefeuille", "Swing", "Spéculatif", "Non classé"].map((c) => <option key={c} value={c}>{c}</option>)}
+                            </select>
+                          </td>
+                          <td className="py-2 px-3">
+                            <input
+                              type="text"
+                              value={p.sector}
+                              onChange={(e) => onUpdate?.(p.id, { sector: e.target.value })}
+                              className="text-xs rounded px-1 py-1 w-28"
+                              style={{ background: t.panelAlt, color: t.text, border: `1px solid ${t.border}`, fontFamily: "ui-sans-serif" }}
+                            />
+                          </td>
+                          <td className="py-2 px-3" style={{ color: t.text }}>{(p.weight * 100).toFixed(1)} %</td>
+                        </tr>
+                      ))}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    function dueOccurrences(rt, today) {
+      const dates = [];
+      let d = new Date(rt.startDate);
+      let guard = 0;
+      while (d <= today && guard < 1000) {
+        dates.push(new Date(d));
+        if (rt.frequency === "hebdomadaire") d.setDate(d.getDate() + 7);
+        else d.setMonth(d.getMonth() + 1);
+        guard++;
+      }
+      return dates;
+    }
+
+    function RecurringTransfersSection({ recurring, onAdd, onToggle, onDelete }) {
+      const t = useTheme();
+      const [sourceAccountId, setSourceAccountId] = useState("externe");
+      const [destinationAccountId, setDestinationAccountId] = useState(accounts[0].id);
+      const [label, setLabel] = useState("");
+      const [amount, setAmount] = useState("");
+      const [frequency, setFrequency] = useState("mensuelle");
+      const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
+      const [error, setError] = useState("");
+
+      const handleAdd = () => {
+        const amt = Math.abs(Number(amount));
+        if (!amount || isNaN(amt) || amt === 0) { setError("Indiquez un montant."); return; }
+        if (sourceAccountId === destinationAccountId) { setError("La source et la destination doivent être différentes."); return; }
+        setError("");
+        onAdd({
+          id: `rt-${Date.now()}`,
+          sourceAccountId,
+          destinationAccountId,
+          label: label.trim() || "Virement programmé",
+          amount: amt,
+          frequency,
+          startDate: new Date(startDate).toISOString(),
+          active: true,
+        });
+        setLabel("");
+        setAmount("");
+      };
+
+      return (
+        <div className="rounded-lg p-4" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
+          <div className="text-xs mb-3 flex items-center gap-1" style={{ color: t.textMuted }}>
+            <RefreshCw size={12} /> Virements permanents programmés
+          </div>
+
+          {recurring.length > 0 && (
+            <div className="space-y-1 mb-3">
+              {recurring.map((rt) => (
+                <div
+                  key={rt.id}
+                  className="flex items-center justify-between text-sm rounded px-3 py-2"
+                  style={{ background: t.panel, border: `1px solid ${t.border}`, opacity: rt.active ? 1 : 0.55 }}
+                >
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => onToggle(rt.id)}
+                      className="text-xs px-2 py-1 rounded"
+                      style={{
+                        background: rt.active ? `${t.gain}22` : `${t.textMuted}22`,
+                        color: rt.active ? t.gain : t.textMuted,
+                        border: `1px solid ${rt.active ? t.gain : t.textMuted}55`,
+                      }}
+                    >
+                      {rt.active ? "Actif" : "En pause"}
+                    </button>
+                    <span style={{ color: t.text }}>{rt.label}</span>
+                    <span className="text-xs flex items-center gap-1" style={{ color: t.textMuted }}>
+                      {transferAccountName(rt.sourceAccountId)} <ArrowLeftRight size={10} /> {transferAccountName(rt.destinationAccountId)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span style={{ color: t.text, fontFamily: "ui-monospace, monospace" }}>{fmtEUR(rt.amount)}</span>
+                    <span className="text-xs" style={{ color: t.textMuted }}>
+                      {rt.frequency === "hebdomadaire" ? "chaque semaine" : "chaque mois"} · depuis le {fmtDate(rt.startDate)}
+                    </span>
+                    <DeleteButton title="Supprimer ce virement permanent (double clic)" onConfirm={() => onDelete(rt.id)} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-3 items-end">
+            <div>
+              <label className="text-xs block mb-1" style={{ color: t.textMuted }}>Compte source</label>
+              <select value={sourceAccountId} onChange={(e) => setSourceAccountId(e.target.value)}
+                className="rounded px-3 py-2 text-sm" style={{ background: t.panel, color: t.text, border: `1px solid ${t.border}` }}>
+                {TRANSFER_ACCOUNTS.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs block mb-1" style={{ color: t.textMuted }}>Compte destination</label>
+              <select value={destinationAccountId} onChange={(e) => setDestinationAccountId(e.target.value)}
+                className="rounded px-3 py-2 text-sm" style={{ background: t.panel, color: t.text, border: `1px solid ${t.border}` }}>
+                {TRANSFER_ACCOUNTS.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </div>
+            <div className="flex-1 min-w-[160px]">
+              <label className="text-xs block mb-1" style={{ color: t.textMuted }}>Libellé</label>
+              <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="ex. Versement programmé"
+                className="w-full rounded px-3 py-2 text-sm" style={{ background: t.panel, color: t.text, border: `1px solid ${t.border}` }} />
+            </div>
+            <div>
+              <label className="text-xs block mb-1" style={{ color: t.textMuted }}>Montant (€)</label>
+              <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
+                className="w-32 rounded px-3 py-2 text-sm" style={{ background: t.panel, color: t.text, border: `1px solid ${t.border}`, fontFamily: "ui-monospace, monospace" }} />
+            </div>
+            <div>
+              <label className="text-xs block mb-1" style={{ color: t.textMuted }}>Fréquence</label>
+              <select value={frequency} onChange={(e) => setFrequency(e.target.value)}
+                className="rounded px-3 py-2 text-sm" style={{ background: t.panel, color: t.text, border: `1px solid ${t.border}` }}>
+                <option value="mensuelle">Mensuelle</option>
+                <option value="hebdomadaire">Hebdomadaire</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs block mb-1" style={{ color: t.textMuted }}>Départ</label>
+              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
+                className="rounded px-3 py-2 text-sm" style={{ background: t.panel, color: t.text, border: `1px solid ${t.border}` }} />
+            </div>
+            <button onClick={handleAdd} className="flex items-center gap-1 px-3 py-2 rounded text-sm"
+              style={{ background: t.accent, color: t.bg }}>
+              <Plus size={14} /> Programmer
+            </button>
+          </div>
+          {error && <p className="text-xs mt-2" style={{ color: t.loss }}>{error}</p>}
+        </div>
+      );
+    }
+
+    function TransfersTab({ transfers, onAdd, onValidate, onUnlink, recurring, onAddRecurring, onToggleRecurring, onDeleteRecurring }) {
+      const t = useTheme();
+      const [sourceAccountId, setSourceAccountId] = useState("externe");
+      const [destinationAccountId, setDestinationAccountId] = useState(accounts[0].id);
+      const [label, setLabel] = useState("");
+      const [amount, setAmount] = useState("");
+      const [departureDate, setDepartureDate] = useState(new Date().toISOString().slice(0, 10));
+      const [arrivalDrafts, setArrivalDrafts] = useState({});
+      const [error, setError] = useState("");
+
+      const handleAdd = () => {
+        const amt = Math.abs(Number(amount));
+        if (!amount || isNaN(amt) || amt === 0) { setError("Indiquez un montant."); return; }
+        if (sourceAccountId === destinationAccountId) { setError("La source et la destination doivent être différentes."); return; }
+        setError("");
+        onAdd({
+          id: `t-${Date.now()}`,
+          sourceAccountId,
+          destinationAccountId,
+          label: label.trim() || "Virement",
+          amount: amt,
+          departureDate: new Date(departureDate).toISOString(),
+          status: "attente",
+          arrivalDate: null,
+          consumedWeekly: false,
+        });
+        setLabel(""); setAmount("");
+      };
+
+      const sorted = [...transfers].sort((a, b) => {
+        if (a.status !== b.status) return a.status === "attente" ? -1 : 1;
+        return new Date(b.departureDate) - new Date(a.departureDate);
+      });
+
+      return (
+        <div className="space-y-5">
+          <RecurringTransfersSection
+            recurring={recurring}
+            onAdd={onAddRecurring}
+            onToggle={onToggleRecurring}
+            onDelete={onDeleteRecurring}
+          />
+
+          <div className="rounded-lg p-4" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
+            <div className="text-xs mb-3" style={{ color: t.textMuted }}>Saisir un virement prévu</div>
+            <div className="flex flex-wrap gap-3 items-end">
+              <div>
+                <label className="text-xs block mb-1" style={{ color: t.textMuted }}>Compte source</label>
+                <select value={sourceAccountId} onChange={(e) => setSourceAccountId(e.target.value)}
+                  className="rounded px-3 py-2 text-sm" style={{ background: t.panel, color: t.text, border: `1px solid ${t.border}` }}>
+                  {TRANSFER_ACCOUNTS.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs block mb-1" style={{ color: t.textMuted }}>Compte destination</label>
+                <select value={destinationAccountId} onChange={(e) => setDestinationAccountId(e.target.value)}
+                  className="rounded px-3 py-2 text-sm" style={{ background: t.panel, color: t.text, border: `1px solid ${t.border}` }}>
+                  {TRANSFER_ACCOUNTS.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
+              </div>
+              <div className="flex-1 min-w-[160px]">
+                <label className="text-xs block mb-1" style={{ color: t.textMuted }}>Libellé</label>
+                <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="ex. Versement programmé"
+                  className="w-full rounded px-3 py-2 text-sm" style={{ background: t.panel, color: t.text, border: `1px solid ${t.border}` }} />
+              </div>
+              <div>
+                <label className="text-xs block mb-1" style={{ color: t.textMuted }}>Montant (€)</label>
+                <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
+                  className="w-32 rounded px-3 py-2 text-sm" style={{ background: t.panel, color: t.text, border: `1px solid ${t.border}`, fontFamily: "ui-monospace, monospace" }} />
+              </div>
+              <div>
+                <label className="text-xs block mb-1" style={{ color: t.textMuted }}>Date de départ</label>
+                <input type="date" value={departureDate} onChange={(e) => setDepartureDate(e.target.value)}
+                  className="rounded px-3 py-2 text-sm" style={{ background: t.panel, color: t.text, border: `1px solid ${t.border}` }} />
+              </div>
+              <button onClick={handleAdd} className="flex items-center gap-1 px-3 py-2 rounded text-sm"
+                style={{ background: t.accent, color: t.bg }}>
+                <Plus size={14} /> Ajouter
+              </button>
+            </div>
+            {error && <p className="text-xs mt-2" style={{ color: t.loss }}>{error}</p>}
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${t.border}` }}>
+                  {["Source", "Destination", "Libellé", "Montant", "Départ", "Statut", "Arrivée", ""].map((h) => (
+                    <th key={h} className="text-left font-normal py-2 px-3" style={{ color: t.textMuted }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((tr) => (
+                  <tr key={tr.id} style={{ borderBottom: `1px solid ${t.border}` }}>
+                    <td className="py-2 px-3 text-xs" style={{ color: t.textMuted }}>{transferAccountName(tr.sourceAccountId)}</td>
+                    <td className="py-2 px-3 text-xs" style={{ color: t.textMuted }}>{transferAccountName(tr.destinationAccountId)}</td>
+                    <td className="py-2 px-3" style={{ color: t.text }}>
+                      <span className="flex items-center gap-1">
+                        {tr.recurringId && <RefreshCw size={11} style={{ color: t.textMuted }} />}
+                        {tr.label}
+                      </span>
+                    </td>
+                    <td className="py-2 px-3" style={{ color: t.text, fontFamily: "ui-monospace, monospace" }}>{fmtEUR(tr.amount)}</td>
+                    <td className="py-2 px-3 text-xs" style={{ color: t.textMuted }}>{fmtDate(tr.departureDate)}</td>
+                    <td className="py-2 px-3"><StatusBadge status={tr.status} /></td>
+                    <td className="py-2 px-3 text-xs" style={{ color: t.textMuted }}>
+                      {tr.arrivalDate ? fmtDate(tr.arrivalDate) : "—"}
+                    </td>
+                    <td className="py-2 px-3">
+                      {tr.status === "attente" && (
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="date"
+                            value={arrivalDrafts[tr.id] || new Date().toISOString().slice(0, 10)}
+                            onChange={(e) => setArrivalDrafts((d) => ({ ...d, [tr.id]: e.target.value }))}
+                            className="rounded px-2 py-1 text-xs"
+                            style={{ background: t.panelAlt, color: t.text, border: `1px solid ${t.border}` }}
+                          />
+                          <button
+                            onClick={() => onValidate(tr.id, new Date(arrivalDrafts[tr.id] || Date.now()).toISOString())}
+                            className="flex items-center gap-1 text-xs px-2 py-1 rounded"
+                            style={{ background: `${t.gain}22`, color: t.gain, border: `1px solid ${t.gain}55` }}
+                          >
+                            <Check size={12} /> Confirmer arrivée
+                          </button>
+                        </div>
+                      )}
+                      {tr.status === "valide" && tr.consumedWeekly && (
+                        <button
+                          onClick={() => onUnlink(tr.id)}
+                          className="text-xs px-2 py-1 rounded"
+                          style={{ border: `1px solid ${t.border}`, color: t.textMuted }}
+                        >
+                          Rendre disponible
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    function WeeklySnapshotModal({ open, onClose, onSave, lastByAccount, pendingTransfers, onImportPositions, editing }) {
+      const t = useTheme();
+      const [date, setDate] = useState(() => (editing ? editing.date.slice(0, 10) : new Date().toISOString().slice(0, 10)));
+      const [byAccount, setByAccount] = useState(() => {
+        const init = {};
+        BOURSE_ACCOUNTS.forEach((a) => { init[a.id] = editing ? (editing.byAccount?.[a.id] ?? 0) : (lastByAccount?.[a.id] ?? 0); });
+        return init;
+      });
+      const [includedTransferIds, setIncludedTransferIds] = useState(() => pendingTransfers.map((tr) => tr.id));
+
+      if (!open) return null;
+
+      const bourseValue = Object.values(byAccount).reduce((s, v) => s + (Number(v) || 0), 0);
+      const lastBourseValue = Object.values(lastByAccount || {}).reduce((s, v) => s + (Number(v) || 0), 0);
+      const includedTransfers = pendingTransfers.filter((tr) => includedTransferIds.includes(tr.id));
+      const newFlows = includedTransfers.flatMap(transferToFlows);
+      const flows = editing ? [...(editing.flows || []), ...newFlows] : newFlows;
+      const netFlows = flows.filter((f) => BOURSE_ACCOUNTS.some((a) => a.id === f.accountId)).reduce((s, f) => s + f.amount, 0);
+      const impliedGain = bourseValue - lastBourseValue - netFlows;
+
+      const toggleTransfer = (id) =>
+        setIncludedTransferIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
+
+      const handleSave = () => {
+        onSave(
+          {
+            id: editing ? editing.id : `w-${Date.now()}`,
+            date: new Date(date).toISOString(),
+            byAccount: Object.fromEntries(Object.entries(byAccount).map(([k, v]) => [k, Number(v) || 0])),
+            bourseValue: Math.round(bourseValue),
+            flows,
+          },
+          includedTransfers.map((tr) => tr.id),
+          !!editing
+        );
+        onClose();
+      };
+
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.55)" }} onClick={onClose}>
+          <div
+            className="w-full max-w-md rounded-lg p-6 max-h-[90vh] overflow-y-auto"
+            style={{ background: t.panel, border: `1px solid ${t.border}` }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 style={{ color: t.text }}>{editing ? "Modifier le point hebdomadaire" : "Nouveau point hebdomadaire"}</h3>
+              <button onClick={onClose}><X size={18} color={t.textMuted} /></button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs" style={{ color: t.textMuted }}>Date</label>
+                <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
+                  className="w-full mt-1 rounded px-3 py-2 text-sm" style={{ background: t.panelAlt, color: t.text, border: `1px solid ${t.border}` }} />
+              </div>
+
+              <div className="space-y-2">
+                <div className="text-xs" style={{ color: t.textMuted }}>Valeur par compte bourse</div>
+                {BOURSE_ACCOUNTS.map((a) => (
+                  <MonthlyAccountRow
+                    key={a.id}
+                    account={a}
+                    value={byAccount[a.id]}
+                    onChange={(v) => setByAccount((b) => ({ ...b, [a.id]: v }))}
+                    onImportPositions={onImportPositions}
+                  />
+                ))}
+                <div className="flex justify-between text-sm pt-2 px-1" style={{ borderTop: `1px solid ${t.border}` }}>
+                  <span style={{ color: t.textMuted }}>Total bourse</span>
+                  <span style={{ color: t.text, fontFamily: "ui-monospace, monospace" }}>{fmtEUR(bourseValue)}</span>
+                </div>
+              </div>
+
+              {pendingTransfers.length > 0 && (
+                <div className="rounded p-3" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
+                  <div className="text-xs mb-2 flex items-center gap-1" style={{ color: t.textMuted }}>
+                    <ArrowLeftRight size={12} /> Virements reçus à intégrer
+                  </div>
+                  <div className="space-y-1">
+                    {pendingTransfers.map((tr) => (
+                      <label key={tr.id} className="flex items-center justify-between text-xs cursor-pointer">
+                        <span className="flex items-center gap-2" style={{ color: t.text }}>
+                          <input type="checkbox" checked={includedTransferIds.includes(tr.id)} onChange={() => toggleTransfer(tr.id)} />
+                          {tr.label} · {transferAccountName(tr.sourceAccountId)} → {transferAccountName(tr.destinationAccountId)}
+                        </span>
+                        <span style={{ color: t.text, fontFamily: "ui-monospace, monospace" }}>{fmtEUR(tr.amount)}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="rounded p-3 text-sm" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
+                <div className="flex justify-between"><span style={{ color: t.textMuted }}>Flux nets saisis</span><span style={{ color: t.text }}>{fmtEUR(netFlows)}</span></div>
+                <div className="flex justify-between mt-1">
+                  <span style={{ color: t.textMuted }}>Gain boursier net implicite</span>
+                  <span style={{ color: impliedGain >= 0 ? t.gain : t.loss }}>{fmtEUR(impliedGain)}</span>
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={handleSave}
+              className="w-full mt-5 rounded py-2 text-sm"
+              style={{ background: t.accent, color: t.bg }}
+            >
+              {editing ? "Enregistrer les modifications" : "Enregistrer le point hebdo"}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    function MonthlyAccountRow({ account, value, onChange, onImportPositions }) {
+      const t = useTheme();
+      const [source, setSource] = useState("manuel");
+      const [csvData, setCsvData] = useState(null);
+      const [csvValueCol, setCsvValueCol] = useState(0);
+      const [detectedPositions, setDetectedPositions] = useState([]);
+      const [fileError, setFileError] = useState("");
+      const [ibkrLoading, setIbkrLoading] = useState(false);
+      const [ibkrError, setIbkrError] = useState("");
+      const [info, setInfo] = useState("");
+
+      const csvComputedTotal = useMemo(() => {
+        if (!csvData) return 0;
+        return csvData.rows.reduce((s, row) => {
+          const v = num(row[csvValueCol]);
+          return s + (isNaN(v) ? 0 : v);
+        }, 0);
+      }, [csvData, csvValueCol]);
+
+      const handleFile = async (file) => {
+        setFileError("");
+        setInfo("");
+        setDetectedPositions([]);
+        try {
+          const parsed = await readFileAsRows(file);
+          if (!parsed.headers || parsed.headers.length === 0) throw new Error("fichier vide ou illisible");
+          const guess = parsed.headers.findIndex((h) => /valo|valeur|montant/i.test(h));
+          const col = guess >= 0 ? guess : 0;
+          setCsvValueCol(col);
+          setCsvData(parsed);
+          setDetectedPositions(parsePositionsFromRows(parsed.headers, parsed.rows, account.id));
+          const total = parsed.rows.reduce((s, row) => { const v = num(row[col]); return s + (isNaN(v) ? 0 : v); }, 0);
+          onChange(Math.round(total));
+          setInfo(`${parsed.rows.length} ligne${parsed.rows.length > 1 ? "s" : ""} · ${fmtEUR(total)}`);
+        } catch (e) {
+          setFileError(e.message || "lecture impossible");
+        }
+      };
+
+      const applyCsv = () => {
+        onChange(Math.round(csvComputedTotal));
+        setInfo(`${csvData.rows.length} ligne${csvData.rows.length > 1 ? "s" : ""} · ${fmtEUR(csvComputedTotal)}`);
+      };
+
+      const applyPositions = () => {
+        onImportPositions(account.id, detectedPositions);
+        setInfo((i) => `${i ? i + " · " : ""}${detectedPositions.length} position(s) mise(s) à jour.`);
+      };
+
+      const refreshIbkr = async () => {
+        setIbkrLoading(true);
+        setIbkrError("");
+        try {
+          const data = await fetchIBKRLive();
+          onChange(Math.round(data.netLiquidation));
+          setInfo(`Connecteur IBKR · ${fmtEUR(data.netLiquidation)}`);
+        } catch (e) {
+          setIbkrError(`Connexion indisponible (${e.message})`);
+        } finally {
+          setIbkrLoading(false);
+        }
+      };
+
+      const tab = (id, label) => (
+        <button
+          type="button"
+          onClick={() => setSource(id)}
+          className="px-2 py-0.5 rounded text-xs"
+          style={{
+            background: source === id ? t.accent : "transparent",
+            color: source === id ? t.bg : t.textMuted,
+            border: `1px solid ${source === id ? t.accent : t.border}`,
+          }}
+        >
+          {label}
+        </button>
+      );
+
+      return (
+        <div className="rounded p-2" style={{ border: `1px solid ${t.border}` }}>
+          <div className="flex items-center justify-between gap-3">
+            <label className="text-sm flex-1" style={{ color: t.text }}>{account.name}</label>
+            <input
+              type="number"
+              value={value}
+              onChange={(e) => onChange(e.target.value)}
+              className="w-32 rounded px-3 py-2 text-sm"
+              style={{ background: t.panelAlt, color: t.text, border: `1px solid ${t.border}`, fontFamily: "ui-monospace, monospace" }}
+            />
+          </div>
+          <div className="flex gap-1 mt-2">
+            {tab("manuel", "Manuel")}
+            {tab("csv", "Fichier")}
+            {tab("ibkr", "IBKR")}
+          </div>
+
+          {source === "csv" && (
+            <div className="mt-2 space-y-2">
+              <input
+                type="file"
+                accept=".csv,.txt,.tsv,.xlsx,.xls"
+                onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])}
+                className="text-xs"
+                style={{ color: t.text }}
+              />
+              {fileError && <p className="text-xs" style={{ color: t.loss }}>{fileError}</p>}
+              {csvData && (
+                <div className="space-y-2">
+                  <div>
+                    <label className="text-xs block mb-1" style={{ color: t.textMuted }}>Colonne valeur (sommée)</label>
+                    <select
+                      value={csvValueCol}
+                      onChange={(e) => setCsvValueCol(Number(e.target.value))}
+                      className="rounded px-2 py-1 text-xs"
+                      style={{ background: t.panelAlt, color: t.text, border: `1px solid ${t.border}` }}
+                    >
+                      {csvData.headers.map((h, i) => <option key={i} value={i}>{h || `Col. ${i + 1}`}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex items-center justify-between text-xs">
+                    <span style={{ color: t.textMuted }}>{csvData.rows.length} lignes · total {fmtEUR(csvComputedTotal)}</span>
+                    <button onClick={applyCsv} className="px-2 py-1 rounded" style={{ background: t.accent, color: t.bg }}>
+                      Appliquer
+                    </button>
+                  </div>
+                  {onImportPositions && detectedPositions.length > 0 && (
+                    <div className="flex items-center justify-between text-xs rounded p-2" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
+                      <span style={{ color: t.textMuted }}>{detectedPositions.length} positions détectées</span>
+                      <button onClick={applyPositions} className="px-2 py-1 rounded" style={{ border: `1px solid ${t.accent}`, color: t.accent }}>
+                        Mettre à jour Positions
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {source === "ibkr" && (
+            <div className="mt-2">
+              <button
+                onClick={refreshIbkr}
+                disabled={ibkrLoading}
+                className="flex items-center gap-1 text-xs px-2 py-1 rounded"
+                style={{ background: t.accent, color: t.bg, opacity: ibkrLoading ? 0.6 : 1 }}
+              >
+                <Link2 size={12} className={ibkrLoading ? "animate-spin" : ""} />
+                {ibkrLoading ? "Connexion…" : "Actualiser depuis IBKR"}
+              </button>
+              {ibkrError && <p className="text-xs mt-1" style={{ color: t.loss }}>{ibkrError}</p>}
+            </div>
+          )}
+          {info && <p className="text-xs mt-1" style={{ color: t.gain }}>{info}</p>}
+        </div>
+      );
+    }
+
+    function MonthlySnapshotModal({ open, onClose, onSave, lastByAccount, onImportPositions }) {
+      const t = useTheme();
+      const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+      const [periode, setPeriode] = useState(new Date().toISOString().slice(0, 7));
+      const [periodeTouched, setPeriodeTouched] = useState(false);
+      const [byAccount, setByAccount] = useState(() => {
+        const init = {};
+        accounts.forEach((a) => { init[a.id] = lastByAccount?.[a.id] ? Math.round(lastByAccount[a.id]) : 0; });
+        return init;
+      });
+
+      if (!open) return null;
+
+      const total = Object.values(byAccount).reduce((s, v) => s + (Number(v) || 0), 0);
+
+      const handleDateChange = (v) => {
+        setDate(v);
+        if (!periodeTouched) setPeriode(v.slice(0, 7));
+      };
+
+      const handleSave = () => {
+        onSave({
+          id: `m-${Date.now()}`,
+          date: new Date(date).toISOString(),
+          periode,
+          byAccount: Object.fromEntries(Object.entries(byAccount).map(([k, v]) => [k, Number(v) || 0])),
+          flows: {},
+          totalWealth: Math.round(total),
+          source: "mixte",
+        });
+        onClose();
+      };
+
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.55)" }} onClick={onClose}>
+          <div
+            className="w-full max-w-lg rounded-lg p-6 max-h-[90vh] overflow-y-auto"
+            style={{ background: t.panel, border: `1px solid ${t.border}` }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 style={{ color: t.text }}>Nouveau point mensuel</h3>
+              <button onClick={onClose}><X size={18} color={t.textMuted} /></button>
+            </div>
+
+            <div className="flex gap-3 mb-4">
+              <div className="flex-1">
+                <label className="text-xs" style={{ color: t.textMuted }}>Mois comptable</label>
+                <input type="month" value={periode} onChange={(e) => { setPeriodeTouched(true); setPeriode(e.target.value); }}
+                  className="w-full mt-1 rounded px-3 py-2 text-sm" style={{ background: t.panelAlt, color: t.text, border: `1px solid ${t.border}` }} />
+              </div>
+              <div className="flex-1">
+                <label className="text-xs" style={{ color: t.textMuted }}>Date du relevé</label>
+                <input type="date" value={date} onChange={(e) => handleDateChange(e.target.value)}
+                  className="w-full mt-1 rounded px-3 py-2 text-sm" style={{ background: t.panelAlt, color: t.text, border: `1px solid ${t.border}` }} />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              {accounts.map((a) => (
+                <MonthlyAccountRow
+                  key={a.id}
+                  account={a}
+                  value={byAccount[a.id]}
+                  onChange={(v) => setByAccount((b) => ({ ...b, [a.id]: v }))}
+                  onImportPositions={onImportPositions}
+                />
+              ))}
+            </div>
+
+            <div className="rounded p-3 text-sm mt-4" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
+              <div className="flex justify-between"><span style={{ color: t.textMuted }}>Patrimoine total du point</span><span style={{ color: t.text, fontFamily: "ui-monospace, monospace" }}>{fmtEUR(total)}</span></div>
+            </div>
+
+            <button
+              onClick={handleSave}
+              className="w-full mt-4 rounded py-2 text-sm"
+              style={{ background: t.accent, color: t.bg }}
+            >
+              Enregistrer le point mensuel
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    function DeleteButton({ onConfirm, title }) {
+      const t = useTheme();
+      const [armed, setArmed] = useState(false);
+      return (
+        <button
+          type="button"
+          title={title}
+          onClick={() => {
+            if (!armed) { setArmed(true); setTimeout(() => setArmed(false), 4000); return; }
+            setArmed(false);
+            onConfirm();
+          }}
+          className="p-1 rounded"
+          style={{ color: armed ? t.loss : t.textMuted, border: `1px solid ${armed ? t.loss : "transparent"}` }}
+        >
+          <X size={13} />
+        </button>
+      );
+    }
+
+    function ResetButton({ onConfirm }) {
+      const t = useTheme();
+      const [armed, setArmed] = useState(false);
+      return (
+        <button
+          type="button"
+          title="Réinitialiser toutes les données (double clic)"
+          onClick={() => {
+            if (!armed) { setArmed(true); setTimeout(() => setArmed(false), 4000); return; }
+            setArmed(false);
+            onConfirm();
+          }}
+          className="text-xs px-2 py-2 rounded"
+          style={{ color: armed ? t.loss : t.textMuted, border: `1px solid ${armed ? t.loss : t.border}` }}
+        >
+          {armed ? "Confirmer la réinitialisation" : "Réinitialiser"}
+        </button>
+      );
+    }
+
+    function HScrollBar({ targetRef }) {
+      const t = useTheme();
+      const scrollBy = (delta) => targetRef.current?.scrollBy({ left: delta, behavior: "smooth" });
+      const BTN = { padding: "3px 8px" };
+      return (
+        <div className="flex items-center gap-2 mb-2">
+          <button type="button" onClick={() => scrollBy(-320)} className="rounded" style={{ ...BTN, border: `1px solid ${t.border}`, color: t.textMuted }}>
+            <ChevronLeft size={14} />
+          </button>
+          <button type="button" onClick={() => scrollBy(320)} className="rounded" style={{ ...BTN, border: `1px solid ${t.border}`, color: t.textMuted }}>
+            <ChevronRight size={14} />
+          </button>
+          <span className="text-xs" style={{ color: t.textMuted }}>Défiler horizontalement</span>
+        </div>
+      );
+    }
+
+    function WeeklyHistoryTab({ weekly, setWeekly, monthly, onEdit, setTransfers }) {
+      const t = useTheme();
+      const scrollRef = useRef(null);
+      const sorted = useMemo(() => [...weekly].sort((a, b) => new Date(a.date) - new Date(b.date)), [weekly]);
+      const displayed = useMemo(
+        () => sorted.map((r, i) => ({ row: r, prev: i > 0 ? sorted[i - 1] : null })).reverse(),
+        [sorted]
+      );
+
+      const monthlyById = useMemo(() => new Map(monthly.map((m) => [m.id, m])), [monthly]);
+      const flowSumFor = (r) => {
+        if (r.flows && r.flows.length > 0) {
+          return r.flows
+            .filter((f) => BOURSE_ACCOUNTS.some((a) => a.id === f.accountId))
+            .reduce((s, f) => s + f.amount, 0);
+        }
+        const m = monthlyById.get(r.id.replace(/^w-/, ""));
+        if (!m) return 0;
+        return BOURSE_ACCOUNTS.reduce((s, a) => s + (m.flows?.[a.id] || 0), 0);
+      };
+
+      const cumGainById = useMemo(() => {
+        const map = new Map();
+        let cum = 0;
+        sorted.forEach((r, i) => {
+          if (i > 0) {
+            const prev = sorted[i - 1];
+            const variation = r.bourseValue - prev.bourseValue;
+            cum += variation - flowSumFor(r);
+          }
+          map.set(r.id, cum);
+        });
+        return map;
+      }, [sorted, monthlyById]);
+
+      const updateValue = (id, accountId, value) => {
+        setWeekly((rows) => rows.map((r) => {
+          if (r.id !== id) return r;
+          const byAccount = { ...r.byAccount, [accountId]: Number(value) || 0 };
+          const bourseValue = Object.values(byAccount).reduce((s, v) => s + (Number(v) || 0), 0);
+          return { ...r, byAccount, bourseValue: Math.round(bourseValue) };
+        }));
+      };
+
+      const updateDate = (id, newDate) => {
+        if (!newDate) return;
+        setWeekly((rows) => rows.map((r) => (r.id === id ? { ...r, date: new Date(newDate).toISOString() } : r)));
+      };
+
+      const updateFlow = (id, value) => {
+        const row = weekly.find((r) => r.id === id);
+        const oldTransferIds = new Set(
+          (row?.flows || [])
+            .map((f) => String(f.id).replace(/-(src|dst)$/, ""))
+            .filter((tid) => tid !== `${id}-manuel`)
+        );
+        setWeekly((rows) => rows.map((r) => {
+          if (r.id !== id) return r;
+          const amount = Number(value) || 0;
+          return { ...r, flows: amount ? [{ id: `${id}-manuel`, accountId: null, date: r.date, amount }] : [] };
+        }));
+        if (oldTransferIds.size > 0) {
+          setTransfers((trs) => trs.map((tr) => (oldTransferIds.has(tr.id) ? { ...tr, consumedWeekly: false } : tr)));
+        }
+      };
+
+      const deleteRow = (id) => setWeekly((rows) => rows.filter((r) => r.id !== id));
+      const cellStyle = { background: t.panelAlt, color: t.text, border: `1px solid ${t.border}`, fontFamily: "ui-monospace, monospace" };
+
+      return (
+        <div>
+          <HScrollBar targetRef={scrollRef} />
+          <div className="overflow-x-auto" ref={scrollRef}>
+            <table className="text-xs" style={{ borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  <th className="text-left py-2 px-2 sticky left-0 z-10" style={{ color: t.textMuted, background: t.panel }}>Date</th>
+                  {BOURSE_ACCOUNTS.map((a) => (
+                    <th key={a.id} className="text-right py-2 px-2" style={{ color: t.textMuted, whiteSpace: "nowrap" }}>{a.name}</th>
+                  ))}
+                  <th className="text-right py-2 px-2" style={{ color: t.textMuted }}>Total bourse</th>
+                  <th className="text-right py-2 px-2" style={{ color: t.textMuted }}>Flux net</th>
+                  <th className="text-right py-2 px-2" style={{ color: t.textMuted }}>Variation</th>
+                  <th className="text-right py-2 px-2" style={{ color: t.textMuted }}>Gain placement</th>
+                  <th className="text-right py-2 px-2" style={{ color: t.textMuted }}>Gain cumulé</th>
+                  <th className="py-2 px-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {displayed.map(({ row: r, prev }) => {
+                  const flowSum = flowSumFor(r);
+                  const variation = prev ? r.bourseValue - prev.bourseValue : null;
+                  const gainPlacement = prev ? variation - flowSum : null;
+                  return (
+                    <tr key={r.id} style={{ borderBottom: `1px solid ${t.border}` }}>
+                      <td className="py-1 px-2 sticky left-0 z-10 align-top" style={{ background: t.panel }}>
+                        <input
+                          type="date"
+                          value={r.date.slice(0, 10)}
+                          onChange={(e) => updateDate(r.id, e.target.value)}
+                          className="rounded px-1 py-1"
+                          style={{ ...cellStyle, width: 118 }}
+                        />
+                      </td>
+                      {BOURSE_ACCOUNTS.map((a) => (
+                        <td key={a.id} className="py-1 px-1 align-top">
+                          <input
+                            type="number"
+                            value={r.byAccount[a.id] ?? 0}
+                            onChange={(e) => updateValue(r.id, a.id, e.target.value)}
+                            className="w-24 rounded px-1 py-1 text-right"
+                            style={cellStyle}
+                          />
+                        </td>
+                      ))}
+                      <td className="py-1 px-2 text-right align-top" style={{ color: t.text, fontFamily: "ui-monospace, monospace" }}>{fmtEUR(r.bourseValue)}</td>
+                      <td className="py-1 px-1 align-top">
+                        <input
+                          type="number"
+                          value={flowSum}
+                          onChange={(e) => updateFlow(r.id, e.target.value)}
+                          title="Flux net de la semaine (apport +, retrait -)"
+                          className="w-24 rounded px-1 py-1 text-right"
+                          style={{ ...cellStyle, color: flowSum >= 0 ? t.gain : t.loss }}
+                        />
+                      </td>
+                      <td className="py-1 px-2 text-right align-top" style={{ color: t.textMuted, fontFamily: "ui-monospace, monospace" }}>
+                        {variation === null ? "—" : `${variation >= 0 ? "+" : ""}${fmtEUR(variation)}`}
+                      </td>
+                      <td className="py-1 px-2 text-right align-top" style={{ color: gainPlacement === null ? t.textMuted : gainPlacement >= 0 ? t.gain : t.loss, fontFamily: "ui-monospace, monospace" }}>
+                        {gainPlacement === null ? "—" : `${gainPlacement >= 0 ? "+" : ""}${fmtEUR(gainPlacement)}`}
+                      </td>
+                      <td className="py-1 px-2 text-right align-top" style={{ color: (cumGainById.get(r.id) || 0) >= 0 ? t.gain : t.loss, fontFamily: "ui-monospace, monospace" }}>
+                        {(() => { const c = cumGainById.get(r.id) || 0; return `${c >= 0 ? "+" : ""}${fmtEUR(c)}`; })()}
+                      </td>
+                      <td className="py-1 px-2 align-top">
+                        <div className="flex items-center gap-1">
+                          {onEdit && (
+                            <button
+                              type="button"
+                              onClick={() => onEdit(r)}
+                              className="p-1 rounded"
+                              style={{ color: t.textMuted }}
+                            >
+                              <Pencil size={13} />
+                            </button>
+                          )}
+                          <DeleteButton title="Supprimer ce point (double clic)" onConfirm={() => deleteRow(r.id)} />
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    function HistoryTab({ monthly, setMonthly }) {
+      const t = useTheme();
+      const scrollRef = useRef(null);
+      const sorted = useMemo(
+        () => [...monthly].sort((a, b) => (a.periode || a.date.slice(0, 7)).localeCompare(b.periode || b.date.slice(0, 7)) || new Date(a.date) - new Date(b.date)),
+        [monthly]
+      );
+      const displayed = useMemo(
+        () => sorted.map((r, i) => ({ row: r, prev: i > 0 ? sorted[i - 1] : null })).reverse(),
+        [sorted]
+      );
+
+      const periodeCounts = useMemo(() => {
+        const counts = {};
+        sorted.forEach((r) => { const p = r.periode || r.date.slice(0, 7); counts[p] = (counts[p] || 0) + 1; });
+        return counts;
+      }, [sorted]);
+
+      const cumGainTotalById = useMemo(() => {
+        const map = new Map();
+        if (sorted.length === 0) return map;
+        const first = sorted[0].totalWealth;
+        sorted.forEach((r) => map.set(r.id, r.totalWealth - first));
+        return map;
+      }, [sorted]);
+
+      const cumGainPlacementById = useMemo(() => {
+        const map = new Map();
+        let cum = 0;
+        sorted.forEach((r, i) => {
+          if (i > 0) {
+            const prev = sorted[i - 1];
+            const variation = r.totalWealth - prev.totalWealth;
+            const totalMouvement = Object.values(r.flows || {}).reduce((s, v) => s + (Number(v) || 0), 0);
+            cum += variation - totalMouvement;
+          }
+          map.set(r.id, cum);
+        });
+        return map;
+      }, [sorted]);
+
+      const cumGainEpargneById = useMemo(() => {
+        const map = new Map();
+        sorted.forEach((r) => map.set(r.id, (cumGainTotalById.get(r.id) || 0) - (cumGainPlacementById.get(r.id) || 0)));
+        return map;
+      }, [sorted, cumGainTotalById, cumGainPlacementById]);
+
+      const updateValue = (id, accountId, value) => {
+        setMonthly((rows) => rows.map((r) => {
+          if (r.id !== id) return r;
+          const byAccount = { ...r.byAccount, [accountId]: Number(value) || 0 };
+          const totalWealth = Object.values(byAccount).reduce((s, v) => s + (Number(v) || 0), 0);
+          return { ...r, byAccount, totalWealth };
+        }));
+      };
+
+      const updateFlow = (id, accountId, value) => {
+        setMonthly((rows) => rows.map((r) => (r.id === id ? { ...r, flows: { ...(r.flows || {}), [accountId]: Number(value) || 0 } } : r)));
+      };
+
+      const updateDate = (id, newDate) => {
+        if (!newDate) return;
+        setMonthly((rows) => rows.map((r) => (r.id === id ? { ...r, date: new Date(newDate).toISOString() } : r)));
+      };
+
+      const updatePeriode = (id, newPeriode) => {
+        if (!newPeriode) return;
+        setMonthly((rows) => rows.map((r) => (r.id === id ? { ...r, periode: newPeriode } : r)));
+      };
+
+      const deleteRow = (id) => setMonthly((rows) => rows.filter((r) => r.id !== id));
+      const cellStyle = { background: t.panelAlt, color: t.text, border: `1px solid ${t.border}`, fontFamily: "ui-monospace, monospace" };
+      const flowStyle = { ...cellStyle, background: t.panel, color: t.textMuted };
+
+      return (
+        <div>
+          <HScrollBar targetRef={scrollRef} />
+          <div className="overflow-x-auto" ref={scrollRef}>
+            <table className="text-xs" style={{ borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  <th className="text-left py-2 px-2 sticky left-0 z-10" style={{ color: t.textMuted, background: t.panel }}>Mois / Date</th>
+                  {accounts.map((a) => (
+                    <th key={a.id} className="text-right py-2 px-2" style={{ color: t.textMuted, whiteSpace: "nowrap" }}>{a.name}</th>
+                  ))}
+                  <th className="text-right py-2 px-2" style={{ color: t.textMuted }}>Total</th>
+                  <th className="text-right py-2 px-2" style={{ color: t.textMuted }}>Gain total</th>
+                  <th className="text-right py-2 px-2" style={{ color: t.textMuted }}>Gain placement</th>
+                  <th className="text-right py-2 px-2" style={{ color: t.textMuted }}>Gain épargne</th>
+                  <th className="text-right py-2 px-2" style={{ color: t.textMuted }}>Gain cumulé</th>
+                  <th className="text-right py-2 px-2" style={{ color: t.textMuted }}>Gain placement cumulé</th>
+                  <th className="text-right py-2 px-2" style={{ color: t.textMuted }}>Gain épargne cumulé</th>
+                  <th className="py-2 px-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {displayed.map(({ row: r, prev }) => {
+                  const periode = r.periode || r.date.slice(0, 7);
+                  const doublon = periodeCounts[periode] > 1;
+                  const variation = prev ? r.totalWealth - prev.totalWealth : null;
+                  const totalMouvement = Object.values(r.flows || {}).reduce((s, v) => s + (Number(v) || 0), 0);
+                  const gainPlacement = prev ? variation - totalMouvement : null;
+                  const gainEpargne = variation !== null && gainPlacement !== null ? variation - gainPlacement : null;
+                  return (
+                  <tr key={r.id} style={{ borderBottom: `1px solid ${t.border}` }}>
+                    <td className="py-1 px-2 sticky left-0 z-10 align-top" style={{ background: t.panel }}>
+                      <input
+                        type="month"
+                        value={periode}
+                        onChange={(e) => updatePeriode(r.id, e.target.value)}
+                        title="Mois comptable"
+                        className="rounded px-1 py-1"
+                        style={{ ...cellStyle, width: 118, borderColor: doublon ? t.accent : t.border, color: doublon ? t.accent : t.text }}
+                      />
+                      <input
+                        type="date"
+                        value={r.date.slice(0, 10)}
+                        onChange={(e) => updateDate(r.id, e.target.value)}
+                        title="Date exacte du relevé"
+                        className="rounded px-1 py-1 mt-0.5"
+                        style={{ ...cellStyle, width: 118, background: "transparent", color: t.textMuted }}
+                      />
+                    </td>
+                    {accounts.map((a) => {
+                      const val = r.byAccount[a.id] ?? 0;
+                      const mvt = r.flows?.[a.id] ?? 0;
+                      const prevVal = prev ? (prev.byAccount[a.id] ?? 0) : val;
+                      const gain = prev ? val - prevVal - mvt : null;
+                      return (
+                        <td key={a.id} className="py-1 px-1 align-top">
+                          <input
+                            type="number"
+                            value={val}
+                            onChange={(e) => updateValue(r.id, a.id, e.target.value)}
+                            className="w-24 rounded px-1 py-1 text-right"
+                            style={cellStyle}
+                          />
+                          <input
+                            type="number"
+                            value={mvt}
+                            placeholder="mvt"
+                            title="Mouvement du mois (apport +, retrait -)"
+                            onChange={(e) => updateFlow(r.id, a.id, e.target.value)}
+                            className="w-24 rounded px-1 py-1 text-right mt-0.5"
+                            style={flowStyle}
+                          />
+                          {gain !== null && (
+                            <div className="text-right pr-1 mt-0.5" style={{ fontSize: 10, color: gain >= 0 ? t.gain : t.loss }}>
+                              {gain >= 0 ? "+" : ""}{Math.round(gain)}
+                            </div>
+                          )}
+                        </td>
+                      );
+                    })}
+                    <td className="py-1 px-2 text-right align-top" style={{ color: t.text, fontFamily: "ui-monospace, monospace" }}>{fmtEUR(r.totalWealth)}</td>
+                    <td className="py-1 px-2 text-right align-top" style={{ color: variation === null ? t.textMuted : variation >= 0 ? t.gain : t.loss, fontFamily: "ui-monospace, monospace" }}>
+                      {variation === null ? "—" : `${variation >= 0 ? "+" : ""}${fmtEUR(variation)}`}
+                    </td>
+                    <td className="py-1 px-2 text-right align-top" style={{ color: gainPlacement === null ? t.textMuted : gainPlacement >= 0 ? t.gain : t.loss, fontFamily: "ui-monospace, monospace" }}>
+                      {gainPlacement === null ? "—" : `${gainPlacement >= 0 ? "+" : ""}${fmtEUR(gainPlacement)}`}
+                    </td>
+                    <td className="py-1 px-2 text-right align-top" style={{ color: gainEpargne === null ? t.textMuted : gainEpargne >= 0 ? t.gain : t.loss, fontFamily: "ui-monospace, monospace" }}>
+                      {gainEpargne === null ? "—" : `${gainEpargne >= 0 ? "+" : ""}${fmtEUR(gainEpargne)}`}
+                    </td>
+                    <td className="py-1 px-2 text-right align-top" style={{ color: (cumGainTotalById.get(r.id) || 0) >= 0 ? t.gain : t.loss, fontFamily: "ui-monospace, monospace" }}>
+                      {(() => { const c = cumGainTotalById.get(r.id) || 0; return `${c >= 0 ? "+" : ""}${fmtEUR(c)}`; })()}
+                    </td>
+                    <td className="py-1 px-2 text-right align-top" style={{ color: (cumGainPlacementById.get(r.id) || 0) >= 0 ? t.gain : t.loss, fontFamily: "ui-monospace, monospace" }}>
+                      {(() => { const c = cumGainPlacementById.get(r.id) || 0; return `${c >= 0 ? "+" : ""}${fmtEUR(c)}`; })()}
+                    </td>
+                    <td className="py-1 px-2 text-right align-top" style={{ color: (cumGainEpargneById.get(r.id) || 0) >= 0 ? t.gain : t.loss, fontFamily: "ui-monospace, monospace" }}>
+                      {(() => { const c = cumGainEpargneById.get(r.id) || 0; return `${c >= 0 ? "+" : ""}${fmtEUR(c)}`; })()}
+                    </td>
+                    <td className="py-1 px-2 align-top">
+                      <DeleteButton title="Supprimer ce point (double clic)" onConfirm={() => deleteRow(r.id)} />
+                    </td>
+                  </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    const STORAGE_KEY = "patrimoine-state";
+    const SEED_VERSION = 8;
+
+    function PatrimoineApp() {
+      const [themeName, setThemeName] = useState("dark");
+      const t = THEMES[themeName];
+      const [positions, setPositions] = useState(stockPositions);
+      const [monthly, setMonthly] = useState(initialMonthlySnapshots);
+      const [weekly, setWeekly] = useState(() => {
+        const m = initialMonthlySnapshots[initialMonthlySnapshots.length - 1];
+        return [{
+          id: `w-${m.id}`,
+          date: m.date,
+          byAccount: { cto: m.byAccount.cto, ibkr: m.byAccount.ibkr, pea_phil: m.byAccount.pea_phil, pea_ghiz: m.byAccount.pea_ghiz },
+          bourseValue: m.byAccount.cto + m.byAccount.ibkr + m.byAccount.pea_phil + m.byAccount.pea_ghiz,
+          flows: [],
+        }];
+      });
+      const [transfers, setTransfers] = useState(initialTransfers);
+      const [recurringTransfers, setRecurringTransfers] = useState([]);
+      const [weeklyModalOpen, setWeeklyModalOpen] = useState(false);
+      const [editingWeekly, setEditingWeekly] = useState(null);
+      const [weeklyModalKey, setWeeklyModalKey] = useState(0);
+      const [monthlyModalOpen, setMonthlyModalOpen] = useState(false);
+      const [monthlyModalKey, setMonthlyModalKey] = useState(0);
+      const [tab, setTab] = useState("dashboard");
+
+      // Persistance Firebase
+      const [loaded, setLoaded] = useState(false);
+      const [saveStatus, setSaveStatus] = useState("idle"); 
+      const [lastSaved, setLastSaved] = useState(null);
+      const docRef = doc(db, "patrimoine", "mon_portefeuille");
+
+      useEffect(() => {
+        let annule = false;
+        (async () => {
+          try {
+            const docSnap = await getDoc(docRef);
+            if (!annule && docSnap.exists()) {
+              const saved = docSnap.data();
+              const seedAJour = saved.seedVersion === SEED_VERSION;
+              
+              if (saved.positions) {
+                const hasIbkr = saved.positions.some((p) => p.accountId === "ibkr");
+                setPositions(hasIbkr ? saved.positions : [...saved.positions, ...stockPositions.filter((p) => p.accountId === "ibkr")]);
+              }
+              if (saved.monthly) {
+                if (seedAJour) setMonthly(saved.monthly);
+                else {
+                  const seedIds = new Set(initialMonthlySnapshots.map((m) => m.id));
+                  setMonthly([...initialMonthlySnapshots, ...saved.monthly.filter((m) => !seedIds.has(m.id))]);
+                }
+              }
+              if (saved.weekly) {
+                const seedWeeklyId = `w-${initialMonthlySnapshots[initialMonthlySnapshots.length - 1].id}`;
+                const userWeekly = saved.weekly.filter((w) => !/^w-m\d+$/.test(w.id) || w.id === seedWeeklyId);
+                const hasSeed = userWeekly.some((w) => w.id === seedWeeklyId);
+                setWeekly((init) => (hasSeed ? userWeekly : [...init, ...userWeekly]));
+              }
+              if (saved.transfers) setTransfers(saved.transfers);
+              if (saved.recurringTransfers) setRecurringTransfers(saved.recurringTransfers);
+            }
+          } catch (e) {
+            console.error("Erreur de chargement Firebase:", e);
+          }
+          if (!annule) setLoaded(true);
+        })();
+        return () => { annule = true; };
+      }, []);
+
+      useEffect(() => {
+        if (!loaded) return; 
+        setSaveStatus("saving");
+        const delai = setTimeout(async () => {
+          try {
+            await setDoc(docRef, {
+              positions,
+              monthly,
+              weekly,
+              transfers,
+              recurringTransfers,
+              seedVersion: SEED_VERSION,
+              derniereMiseAJour: new Date().toISOString()
+            });
+            setSaveStatus("saved"); 
+            setLastSaved(new Date());
+          } catch (e) {
+            console.error("Erreur de sauvegarde Firebase:", e);
+            setSaveStatus("erreur");
+          }
+        }, 800); 
+        return () => clearTimeout(delai);
+      }, [positions, monthly, weekly, transfers, recurringTransfers, loaded]);
+
+      useEffect(() => {
+        if (!loaded) return;
+        const referenced = new Set(
+          weekly.flatMap((w) => (w.flows || []).map((f) => String(f.id).replace(/-(src|dst)$/, "")))
+        );
+        const orphans = transfers.filter((tr) => tr.consumedWeekly && !referenced.has(tr.id));
+        if (orphans.length) {
+          const ids = new Set(orphans.map((tr) => tr.id));
+          setTransfers((trs) => trs.map((tr) => (ids.has(tr.id) ? { ...tr, consumedWeekly: false } : tr)));
+        }
+      }, [loaded, weekly, transfers]);
+
+      const handleReset = () => {
+        setPositions(stockPositions);
+        setMonthly(initialMonthlySnapshots);
+        setWeekly(
+          initialMonthlySnapshots.map((m) => ({
+            id: `w-${m.id}`,
+            date: m.date,
+            byAccount: { cto: m.byAccount.cto, ibkr: m.byAccount.ibkr, pea_phil: m.byAccount.pea_phil, pea_ghiz: m.byAccount.pea_ghiz },
+            bourseValue: m.byAccount.cto + m.byAccount.ibkr + m.byAccount.pea_phil + m.byAccount.pea_ghiz,
+            flows: [],
+          }))
+        );
+        setTransfers(initialTransfers);
+        setRecurringTransfers([]);
+      };
+
+      const handleExport = () => {
+        const payload = { positions, monthly, weekly, transfers, recurringTransfers, seedVersion: SEED_VERSION, exportedAt: new Date().toISOString() };
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `patrimoine-sauvegarde-${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      };
+
+      const handleImportFile = async (file) => {
+        try {
+          const text = await file.text();
+          const data = JSON.parse(text);
+          if (data.positions) setPositions(data.positions);
+          if (data.monthly) setMonthly(data.monthly);
+          if (data.weekly) setWeekly(data.weekly);
+          if (data.transfers) setTransfers(data.transfers);
+          if (data.recurringTransfers) setRecurringTransfers(data.recurringTransfers);
+        } catch (e) {
+          alert("Fichier de sauvegarde illisible");
+        }
+      };
+
+      const pendingValidatedTransfers = useMemo(
+        () =>
+          transfers.filter(
+            (tr) =>
+              tr.status === "valide" &&
+              !tr.consumedWeekly &&
+              BOURSE_ACCOUNTS.some((a) => a.id === tr.sourceAccountId || a.id === tr.destinationAccountId)
+          ),
+        [transfers]
+      );
+
+      useEffect(() => {
+        const today = new Date();
+        setTransfers((trs) => {
+          const toAdd = [];
+          recurringTransfers.filter((rt) => rt.active).forEach((rt) => {
+            dueOccurrences(rt, today).forEach((date) => {
+              const dateKey = date.toISOString().slice(0, 10);
+              const already = trs.some((tr) => tr.recurringId === rt.id && tr.departureDate.slice(0, 10) === dateKey)
+                || toAdd.some((tr) => tr.recurringId === rt.id && tr.departureDate.slice(0, 10) === dateKey);
+              if (!already) {
+                toAdd.push({
+                  id: `rt-${rt.id}-${dateKey}`,
+                  sourceAccountId: rt.sourceAccountId,
+                  destinationAccountId: rt.destinationAccountId,
+                  label: rt.label,
+                  amount: rt.amount,
+                  departureDate: date.toISOString(),
+                  status: "attente",
+                  arrivalDate: null,
+                  consumedWeekly: false,
+                  recurringId: rt.id,
+                });
+              }
+            });
+          });
+          return toAdd.length ? [...trs, ...toAdd] : trs;
+        });
+      }, [recurringTransfers]);
+
+      const handleSaveWeekly = (snapshot, consumedTransferIds, isEdit) => {
+        setWeekly((w) => (isEdit ? w.map((x) => (x.id === snapshot.id ? snapshot : x)) : [...w, snapshot]));
+        if (consumedTransferIds?.length) {
+          setTransfers((trs) => trs.map((tr) => (consumedTransferIds.includes(tr.id) ? { ...tr, consumedWeekly: true } : tr)));
+        }
+      };
+      
+      const handleEditWeekly = (point) => { setEditingWeekly(point); setWeeklyModalKey((k) => k + 1); setWeeklyModalOpen(true); };
+      const handleAddTransfer = (tr) => setTransfers((trs) => [...trs, tr]);
+      const handleValidateTransfer = (id, arrivalDate) =>
+        setTransfers((trs) => trs.map((tr) => (tr.id === id ? { ...tr, status: "valide", arrivalDate } : tr)));
+      const handleUnlinkTransfer = (id) =>
+        setTransfers((trs) => trs.map((tr) => (tr.id === id ? { ...tr, consumedWeekly: false } : tr)));
+      const handleAddRecurring = (rt) => setRecurringTransfers((rts) => [...rts, rt]);
+      const handleToggleRecurring = (id) => setRecurringTransfers((rts) => rts.map((rt) => (rt.id === id ? { ...rt, active: !rt.active } : rt)));
+      const handleDeleteRecurring = (id) => setRecurringTransfers((rts) => rts.filter((rt) => rt.id !== id));
+      const handleImportPositions = (accountId, newPositions) =>
+        setPositions((prev) => [...prev.filter((p) => p.accountId !== accountId), ...newPositions]);
+
+      const allFlows = useMemo(() => {
+        const monthlyFlows = monthly.flatMap((m) =>
+          Object.entries(m.flows || {}).map(([accountId, amount]) => ({ id: `${m.id}-${accountId}`, accountId, date: m.date, amount }))
+        );
+        const weeklyFlows = weekly.flatMap((s) => s.flows);
+        const transferFlows = transfers.filter((tr) => tr.status === "valide").flatMap(transferToFlows);
+        const consumedIds = new Set(weeklyFlows.map((f) => f.id));
+        return [
+          ...monthlyFlows,
+          ...weeklyFlows,
+          ...transferFlows.filter((f) => !consumedIds.has(f.id)),
+        ];
+      }, [monthly, weekly, transfers]);
+
+      const monthlyMetrics = useMemo(() => buildMonthlyMetrics(monthly, allFlows), [monthly, allFlows]);
+      const yearlyMetrics = useMemo(() => buildYearlyMetrics(monthlyMetrics), [monthlyMetrics]);
+      const categoryAlloc = useMemo(() => aggregatePositions(positions, "category"), [positions]);
+      const sectorAlloc = useMemo(() => aggregateSectors(positions), [positions]);
+
+      const lastMonthly = monthly[monthly.length - 1];
+      const lastWeek = weekly[weekly.length - 1];
+      const lastMetric = monthlyMetrics[monthlyMetrics.length - 1];
+      const cumSavings = monthlyMetrics.reduce((s, m) => s + m.epargne, 0);
+      const cumGain = monthlyMetrics.reduce((s, m) => s + m.gain, 0);
+      const totalWealthChange = lastMetric ? lastMetric.savings + lastMetric.gain : 0;
+      const lastMonthWealthPrev = lastMetric ? lastMetric.wealth - totalWealthChange : lastMetric?.wealth || 1;
+      const lastMonthVariationPct = lastMonthWealthPrev ? totalWealthChange / lastMonthWealthPrev : 0;
+      const cumGainPct = cumSavings ? cumGain / (monthlyMetrics[0]?.wealth || 1) : 0;
+      const avgAnnualGainPlacement = yearlyMetrics.length ? yearlyMetrics.reduce((s, y) => s + y.gain, 0) / yearlyMetrics.length : 0;
+      const avgAnnualGainEpargne = yearlyMetrics.length ? yearlyMetrics.reduce((s, y) => s + y.epargne, 0) / yearlyMetrics.length : 0;
+
+      const NAV_ITEMS = [
+        { id: "dashboard", label: "Tableau de bord" },
+        { id: "positions", label: "Positions" },
+        { id: "virements", label: "Virements" },
+        { id: "historique", label: "Historique" },
+      ];
+
+      if (!loaded) {
+        return (
+          <div className="min-h-screen w-full flex items-center justify-center" style={{ background: t.bg }}>
+            <p className="text-sm" style={{ color: t.textMuted }}>Chargement du patrimoine…</p>
+          </div>
+        );
+      }
+
+      return (
+        <ThemeCtx.Provider value={t}>
+          <div className="min-h-screen w-full" style={{ background: t.bg }}>
+            <div className="sticky top-0 z-40" style={{ background: t.bg, borderBottom: `1px solid ${t.border}` }}>
+              <div className="max-w-6xl mx-auto px-6 pt-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h1 className="text-lg" style={{ color: t.text }}>Poste de pilotage patrimoine</h1>
+                    <p className="text-xs" style={{ color: t.textMuted }}>
+                      Dernier relevé mensuel au {fmtDate(lastMonthly.date)} · Bourse au {fmtDate(lastWeek.date)}
+                      {" · "}
+                      {saveStatus === "saving" && "Enregistrement…"}
+                      {saveStatus === "saved" && lastSaved && `Sauvegardé à ${lastSaved.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`}
+                      {saveStatus === "erreur" && <span style={{ color: t.loss }}>Échec de la sauvegarde</span>}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <ResetButton onConfirm={handleReset} />
+                    <button
+                      onClick={handleExport}
+                      title="Télécharger une sauvegarde JSON"
+                      className="flex items-center gap-1 p-2 rounded text-xs"
+                      style={{ border: `1px solid ${t.border}`, color: t.textMuted }}
+                    >
+                      <Download size={14} />
+                    </button>
+                    <label
+                      title="Restaurer une sauvegarde JSON"
+                      className="flex items-center gap-1 p-2 rounded text-xs cursor-pointer"
+                      style={{ border: `1px solid ${t.border}`, color: t.textMuted }}
+                    >
+                      <Upload size={14} />
+                      <input
+                        type="file"
+                        accept="application/json"
+                        className="hidden"
+                        onChange={(e) => e.target.files[0] && handleImportFile(e.target.files[0])}
+                      />
+                    </label>
+                    <button
+                      onClick={() => setThemeName((n) => (n === "dark" ? "light" : "dark"))}
+                      className="p-2 rounded"
+                      style={{ border: `1px solid ${t.border}`, color: t.textMuted }}
+                    >
+                      {themeName === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+                    </button>
+                    <button
+                      onClick={() => { setMonthlyModalKey((k) => k + 1); setMonthlyModalOpen(true); }}
+                      className="flex items-center gap-1 px-3 py-2 rounded text-sm"
+                      style={{ border: `1px solid ${t.border}`, color: t.text }}
+                    >
+                      <Plus size={14} /> Point mensuel
+                    </button>
+                    <button
+                      onClick={() => { setEditingWeekly(null); setWeeklyModalKey((k) => k + 1); setWeeklyModalOpen(true); }}
+                      className="flex items-center gap-1 px-3 py-2 rounded text-sm"
+                      style={{ background: t.accent, color: t.bg }}
+                    >
+                      <Plus size={14} /> Point hebdo
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex gap-1">
+                  {NAV_ITEMS.map((n) => (
+                    <button
+                      key={n.id}
+                      onClick={() => setTab(n.id)}
+                      className="px-4 py-2 text-sm"
+                      style={{
+                        color: tab === n.id ? t.text : t.textMuted,
+                        borderBottom: tab === n.id ? `2px solid ${t.accent}` : "2px solid transparent",
+                      }}
+                    >
+                      {n.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="max-w-6xl mx-auto p-6">
+              {tab === "dashboard" && (
+                <div className="space-y-6">
+                  <div className="flex flex-wrap gap-4">
+                    <KPICard icon={Wallet} label="Patrimoine total" value={fmtEUR(lastMonthly.totalWealth)}
+                      sub={`${totalWealthChange >= 0 ? "+" : ""}${fmtEUR(totalWealthChange)} vs mois dernier`}
+                      highlight tone={totalWealthChange >= 0 ? "up" : "down"} />
+                    <KPICard icon={TrendingUp} label="Gain lié aux placements" value={fmtEUR(cumGain)}
+                      sub={fmtPct(cumGainPct)} tone={cumGain >= 0 ? "up" : "down"} />
+                    <KPICard icon={PiggyBank} label="Épargne cumulée" value={fmtEUR(cumSavings)}
+                      sub="Versements sur placements + variation trésorerie" tone={cumSavings >= 0 ? "up" : "down"} />
+                    <KPICard icon={Percent} label="Variation du dernier mois" value={fmtPct(lastMonthVariationPct)}
+                      sub="Épargne + gain du mois" tone={lastMonthVariationPct >= 0 ? "up" : "down"} />
+                    <KPICard icon={TrendingUp} label="Gain placement moyen / an" value={fmtEUR(avgAnnualGainPlacement)}
+                      sub={`Moyenne sur ${yearlyMetrics.length} an${yearlyMetrics.length > 1 ? "s" : ""}`} tone={avgAnnualGainPlacement >= 0 ? "up" : "down"} />
+                    <KPICard icon={PiggyBank} label="Épargne moyenne / an" value={fmtEUR(avgAnnualGainEpargne)}
+                      sub={`Moyenne sur ${yearlyMetrics.length} an${yearlyMetrics.length > 1 ? "s" : ""}`} tone={avgAnnualGainEpargne >= 0 ? "up" : "down"} />
+                  </div>
+
+                  <Panel title="Évolution mensuelle — épargne, placement et patrimoine total">
+                    <MonthlyEvolutionChart data={monthlyMetrics} />
+                  </Panel>
+
+                  <Panel title="Bilan annuel — épargne, gain de placement et variation du patrimoine">
+                    <YearlyBarChart data={yearlyMetrics} />
+                  </Panel>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <Panel title="Répartition par catégorie">
+                      <AllocationDonut data={categoryAlloc} colorFor={(k) => CATEGORY_COLOR(t)[k] || t.textMuted} />
+                      <div className="mt-2 space-y-1">
+                        {categoryAlloc.map((c) => (
+                          <div key={c.key} className="flex items-center justify-between text-xs">
+                            <span className="flex items-center gap-2" style={{ color: t.textMuted }}>
+                              <span className="w-2 h-2 rounded-full" style={{ background: CATEGORY_COLOR(t)[c.key] }} />
+                              {c.key}
+                            </span>
+                            <span style={{ color: t.text }}>{(c.weight * 100).toFixed(0)} %</span>
+                          </div>
+                        ))}
+                      </div>
+                    </Panel>
+                    <Panel title="Répartition sectorielle">
+                      <AllocationDonut data={sectorAlloc} colorFor={(k, i) => SECTOR_PALETTE(t)[i % SECTOR_PALETTE(t).length]} />
+                      <div className="mt-2 space-y-2">
+                        {sectorAlloc.map((g, i) => (
+                          <div key={g.key}>
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="flex items-center gap-2" style={{ color: t.text, fontWeight: 600 }}>
+                                <span className="w-2 h-2 rounded-full" style={{ background: SECTOR_PALETTE(t)[i % SECTOR_PALETTE(t).length] }} />
+                                {g.key}
+                              </span>
+                              <span style={{ color: t.text, fontWeight: 600 }}>{fmtEUR(g.value)} · {(g.weight * 100).toFixed(0)} %</span>
+                            </div>
+                            {g.subs.length > 1 && g.subs.map((sub) => (
+                              <div key={sub.key} className="flex items-center justify-between text-[11px] pl-5">
+                                <span style={{ color: t.textMuted }}>{sub.key}</span>
+                                <span style={{ color: t.textMuted }}>{fmtEUR(sub.value)} · {(sub.weight * 100).toFixed(1)} %</span>
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    </Panel>
+                  </div>
+
+                  <Panel title="Évolution des comptes bourse — CTO Degiro, IBKR, PEA Phil, PEA Ghiz">
+                    <AccountsEvolutionChart series={weekly} />
+                  </Panel>
+                </div>
+              )}
+
+              {tab === "positions" && (
+                <Panel title={`Positions boursières (${positions.length} lignes)`}>
+                  <PositionsImport onImport={handleImportPositions} />
+                  <PositionsTable
+                    positions={positions}
+                    onUpdate={(id, patch) => setPositions((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)))}
+                  />
+                </Panel>
+              )}
+
+              {tab === "virements" && (
+                <Panel title={`Virements (${transfers.length})`}>
+                  <TransfersTab
+                    transfers={transfers}
+                    onAdd={handleAddTransfer}
+                    onValidate={handleValidateTransfer}
+                    onUnlink={handleUnlinkTransfer}
+                    recurring={recurringTransfers}
+                    onAddRecurring={handleAddRecurring}
+                    onToggleRecurring={handleToggleRecurring}
+                    onDeleteRecurring={handleDeleteRecurring}
+                  />
+                </Panel>
+              )}
+
+              {tab === "historique" && (
+                <div className="space-y-6">
+                  <Panel title="Points mensuels — correction manuelle" collapsible defaultCollapsed>
+                    <HistoryTab monthly={monthly} setMonthly={setMonthly} />
+                  </Panel>
+                  <Panel title="Points hebdo — correction manuelle">
+                    <WeeklyHistoryTab weekly={weekly} setWeekly={setWeekly} monthly={monthly} onEdit={handleEditWeekly} setTransfers={setTransfers} />
+                  </Panel>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <WeeklySnapshotModal
+            key={weeklyModalKey}
+            open={weeklyModalOpen}
+            onClose={() => { setWeeklyModalOpen(false); setEditingWeekly(null); }}
+            onSave={handleSaveWeekly}
+            lastByAccount={lastWeek?.byAccount}
+            pendingTransfers={pendingValidatedTransfers}
+            onImportPositions={handleImportPositions}
+            editing={editingWeekly}
+          />
+          <MonthlySnapshotModal
+            key={monthlyModalKey}
+            open={monthlyModalOpen}
+            onClose={() => setMonthlyModalOpen(false)}
+            onSave={(snap) => setMonthly((m) => [...m, snap])}
+            lastByAccount={lastMonthly?.byAccount}
+            onImportPositions={handleImportPositions}
+          />
+        </ThemeCtx.Provider>
+      );
+    }
+
+    const root = createRoot(document.getElementById("root"));
+    root.render(<PatrimoineApp />);
+  </script>
+</body>
+</html>
