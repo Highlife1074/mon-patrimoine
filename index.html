@@ -86,24 +86,26 @@
         return { ...snap, gain, cumGain, cumCapital, flowSum };
       });
     }
+const CASH_ACCOUNTS = ["lcl", "revolut"];
 
-    function buildWealthDecomposition(monthlySnapshots, allCashFlows) {
-      if (monthlySnapshots.length === 0) return [];
-      const initial = monthlySnapshots[0].totalWealth;
-      let cumFlows = 0;
-      return monthlySnapshots.map((snap, i) => {
-        if (i > 0) {
-          const prevDate = monthlySnapshots[i - 1].date;
-          const flowsInPeriod = allCashFlows
-            .filter((f) => f.date > prevDate && f.date <= snap.date)
-            .reduce((s, f) => s + f.amount, 0);
-          cumFlows += flowsInPeriod;
-        }
-        const capitalBase = initial + cumFlows;
-        const gains = snap.totalWealth - capitalBase;
-        return { date: snap.date, capital: Math.round(capitalBase), gains: Math.round(gains), total: snap.totalWealth };
-      });
+function buildWealthDecomposition(monthlySnapshots, allCashFlows) {
+  if (monthlySnapshots.length === 0) return [];
+  const initial = monthlySnapshots[0].totalWealth;
+  let cumFlows = 0;
+  return monthlySnapshots.map((snap, i) => {
+    if (i > 0) {
+      const prevDate = monthlySnapshots[i - 1].date;
+      const flowsInPeriod = allCashFlows
+        // On exclut les mouvements de trésorerie pour ne sommer que l'argent investi/désinvesti
+        .filter((f) => f.date > prevDate && f.date <= snap.date && !CASH_ACCOUNTS.includes(f.accountId))
+        .reduce((s, f) => s + f.amount, 0);
+      cumFlows += flowsInPeriod;
     }
+    const capitalBase = initial + cumFlows;
+    const gains = snap.totalWealth - capitalBase;
+    return { date: snap.date, capital: Math.round(capitalBase), gains: Math.round(gains), total: snap.totalWealth };
+  });
+}
 
     function resampleToMonthly(snapshots) {
       const byPeriod = new Map();
@@ -143,20 +145,29 @@
     }
 
     function buildYearlyMetrics(monthlyMetrics) {
-      const byYear = new Map();
-      monthlyMetrics.forEach((m) => {
-        const y = new Date(m.date).getFullYear();
-        if (!byYear.has(y)) byYear.set(y, { year: y, savings: 0, cash: 0, gain: 0, epargne: 0 });
-        const acc = byYear.get(y);
-        acc.savings += m.savings;
-        acc.cash += m.cash;
-        acc.gain += m.gain;
-        acc.epargne += m.epargne;
-      });
-      return Array.from(byYear.values())
-        .sort((a, b) => a.year - b.year)
-        .map((y) => ({ ...y, wealthChange: y.savings + y.cash + y.gain }));
-    }
+  const byYear = new Map();
+  monthlyMetrics.forEach((m) => {
+    const y = new Date(m.date).getFullYear();
+    if (!byYear.has(y)) byYear.set(y, { year: y, savings: 0, cash: 0, gain: 0, epargne: 0, endWealth: 0 });
+    const acc = byYear.get(y);
+    acc.savings += m.savings;
+    acc.cash += m.cash;
+    acc.gain += m.gain;
+    acc.epargne += m.epargne;
+    // La boucle écrasant la valeur, on conserve toujours le dernier mois de l'année
+    acc.endWealth = m.wealth; 
+  });
+  
+  const result = Array.from(byYear.values()).sort((a, b) => a.year - b.year);
+  
+  return result.map((y, i) => {
+    const wealthChange = y.savings + y.cash + y.gain;
+    // Valorisation N-1 (ou reconstituée pour la première année)
+    const startWealth = i === 0 ? y.endWealth - wealthChange : result[i - 1].endWealth;
+    const yieldPct = startWealth > 0 ? y.gain / startWealth : 0;
+    return { ...y, wealthChange, startWealth, yieldPct };
+  });
+}
 
     const SECTOR_GROUP_EXACT = {
       "Technologie": "Technologie",
@@ -613,29 +624,29 @@
       );
     }
 
-    function KPICard({ icon: Icon, label, value, sub, highlight, tone }) {
-      const t = useTheme();
-      const toneColor = tone === "up" ? t.gain : tone === "down" ? t.loss : t.text;
-      return (
-        <div
-          className="flex-1 min-w-[200px] rounded-lg p-5"
-          style={{
-            background: t.panel,
-            border: `1px solid ${t.border}`,
-            borderLeft: highlight ? `3px solid ${t.accent}` : `1px solid ${t.border}`,
-          }}
-        >
-          <div className="flex items-center gap-2 mb-3">
-            <Icon size={16} color={t.textMuted} />
-            <span className="text-sm" style={{ color: t.textMuted }}>{label}</span>
-          </div>
-          <div className={highlight ? "text-3xl" : "text-2xl"} style={{ color: toneColor, fontFamily: "ui-monospace, monospace" }}>
-            {value}
-          </div>
-          {sub && <div className="text-xs mt-2" style={{ color: t.textMuted }}>{sub}</div>}
-        </div>
-      );
-    }
+   function KPICard({ icon: Icon, label, value, sub, highlight, tone }) {
+  const t = useTheme();
+  const toneColor = tone === "up" ? t.gain : tone === "down" ? t.loss : t.text;
+  return (
+    <div
+      className="flex-1 min-w-[200px] rounded-lg p-5"
+      style={{
+        background: t.panel,
+        border: `1px solid ${t.border}`,
+        borderLeft: highlight ? `3px solid ${t.accent}` : `1px solid ${t.border}`,
+      }}
+    >
+      <div className="flex items-center gap-2 mb-3">
+        <Icon size={16} color={t.textMuted} />
+        <span className="text-sm" style={{ color: t.textMuted }}>{label}</span>
+      </div>
+      <div className={highlight ? "text-3xl" : "text-2xl"} style={{ color: toneColor, fontFamily: "ui-monospace, monospace" }}>
+        {value}
+      </div>
+      {sub && <div className="text-xs mt-2" style={{ color: t.textMuted }}>{sub}</div>}
+    </div>
+  );
+}
 
     function Panel({ title, action, children, collapsible, defaultCollapsed }) {
       const t = useTheme();
@@ -2438,7 +2449,10 @@
       const cumGainPct = cumSavings ? cumGain / (monthlyMetrics[0]?.wealth || 1) : 0;
       const avgAnnualGainPlacement = yearlyMetrics.length ? yearlyMetrics.reduce((s, y) => s + y.gain, 0) / yearlyMetrics.length : 0;
       const avgAnnualGainEpargne = yearlyMetrics.length ? yearlyMetrics.reduce((s, y) => s + y.epargne, 0) / yearlyMetrics.length : 0;
-
+      const yearlyYields = yearlyMetrics.filter(y => y.startWealth > 0);
+      const avgYield = yearlyYields.length > 0 
+      ? yearlyYields.reduce((s, y) => s + y.yieldPct, 0) / yearlyYields.length 
+      : 0;
       const NAV_ITEMS = [
         { id: "dashboard", label: "Tableau de bord" },
         { id: "positions", label: "Positions" },
