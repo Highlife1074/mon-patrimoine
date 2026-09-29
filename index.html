@@ -1301,7 +1301,7 @@ function buildWealthDecomposition(monthlySnapshots, allCashFlows) {
       );
     }
 
-    function TransfersTab({ transfers, onAdd, onValidate, onUnlink, recurring, onAddRecurring, onToggleRecurring, onDeleteRecurring }) {
+   function TransfersTab({ transfers, onAdd, onValidate, onUnlink, recurring, onAddRecurring, onToggleRecurring, onDeleteRecurring }) {
       const t = useTheme();
       const [sourceAccountId, setSourceAccountId] = useState("externe");
       const [destinationAccountId, setDestinationAccountId] = useState(accounts[0].id);
@@ -1326,6 +1326,7 @@ function buildWealthDecomposition(monthlySnapshots, allCashFlows) {
           status: "attente",
           arrivalDate: null,
           consumedWeekly: false,
+          consumedMonthly: false,
         });
         setLabel(""); setAmount("");
       };
@@ -1409,6 +1410,16 @@ function buildWealthDecomposition(monthlySnapshots, allCashFlows) {
                     <td className="py-2 px-3"><StatusBadge status={tr.status} /></td>
                     <td className="py-2 px-3 text-xs" style={{ color: t.textMuted }}>
                       {tr.arrivalDate ? fmtDate(tr.arrivalDate) : "—"}
+                      {tr.status === "valide" && (
+                        <div className="mt-1 flex flex-col gap-0.5" style={{ fontSize: "10px" }}>
+                          <span style={{ color: tr.consumedWeekly ? t.textMuted : t.accent }}>
+                            {tr.consumedWeekly ? "✔ inclus hebdo" : "• attente hebdo"}
+                          </span>
+                          <span style={{ color: tr.consumedMonthly ? t.textMuted : t.accent }}>
+                            {tr.consumedMonthly ? "✔ inclus mensuel" : "• attente mensuel"}
+                          </span>
+                        </div>
+                      )}
                     </td>
                     <td className="py-2 px-3">
                       {tr.status === "attente" && (
@@ -1429,7 +1440,7 @@ function buildWealthDecomposition(monthlySnapshots, allCashFlows) {
                           </button>
                         </div>
                       )}
-                      {tr.status === "valide" && tr.consumedWeekly && (
+                      {tr.status === "valide" && (tr.consumedWeekly || tr.consumedMonthly) && (
                         <button
                           onClick={() => onUnlink(tr.id)}
                           className="text-xs px-2 py-1 rounded"
@@ -1447,7 +1458,6 @@ function buildWealthDecomposition(monthlySnapshots, allCashFlows) {
         </div>
       );
     }
-
     function WeeklySnapshotModal({ open, onClose, onSave, lastByAccount, pendingTransfers, onImportPositions, editing }) {
       const t = useTheme();
       const [date, setDate] = useState(() => (editing ? editing.date.slice(0, 10) : new Date().toISOString().slice(0, 10)));
