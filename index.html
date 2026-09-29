@@ -88,24 +88,25 @@
     }
 const CASH_ACCOUNTS = ["lcl", "revolut"];
 
-function buildWealthDecomposition(monthlySnapshots, allCashFlows) {
-  if (monthlySnapshots.length === 0) return [];
-  const initial = monthlySnapshots[0].totalWealth;
-  let cumFlows = 0;
-  return monthlySnapshots.map((snap, i) => {
-    if (i > 0) {
-      const prevDate = monthlySnapshots[i - 1].date;
-      const flowsInPeriod = allCashFlows
-        // On exclut les mouvements de trésorerie pour ne sommer que l'argent investi/désinvesti
-        .filter((f) => f.date > prevDate && f.date <= snap.date && !CASH_ACCOUNTS.includes(f.accountId))
-        .reduce((s, f) => s + f.amount, 0);
-      cumFlows += flowsInPeriod;
+const CASH_ACCOUNTS = ["lcl", "revolut"];
+
+    function buildWealthDecomposition(monthlySnapshots, allCashFlows) {
+      if (monthlySnapshots.length === 0) return [];
+      const initial = monthlySnapshots[0].totalWealth;
+      let cumFlows = 0;
+      return monthlySnapshots.map((snap, i) => {
+        if (i > 0) {
+          const prevDate = monthlySnapshots[i - 1].date;
+          const flowsInPeriod = allCashFlows
+            .filter((f) => f.date > prevDate && f.date <= snap.date && !CASH_ACCOUNTS.includes(f.accountId))
+            .reduce((s, f) => s + f.amount, 0);
+          cumFlows += flowsInPeriod;
+        }
+        const capitalBase = initial + cumFlows;
+        const gains = snap.totalWealth - capitalBase;
+        return { date: snap.date, capital: Math.round(capitalBase), gains: Math.round(gains), total: snap.totalWealth };
+      });
     }
-    const capitalBase = initial + cumFlows;
-    const gains = snap.totalWealth - capitalBase;
-    return { date: snap.date, capital: Math.round(capitalBase), gains: Math.round(gains), total: snap.totalWealth };
-  });
-}
 
     function resampleToMonthly(snapshots) {
       const byPeriod = new Map();
@@ -1729,7 +1730,7 @@ function buildWealthDecomposition(monthlySnapshots, allCashFlows) {
       );
     }
 
-    function MonthlySnapshotModal({ open, onClose, onSave, lastByAccount, onImportPositions }) {
+  function MonthlySnapshotModal({ open, onClose, onSave, lastByAccount, onImportPositions, pendingTransfers = [] }) {
       const t = useTheme();
       const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
       const [periode, setPeriode] = useState(new Date().toISOString().slice(0, 7));
@@ -1739,6 +1740,7 @@ function buildWealthDecomposition(monthlySnapshots, allCashFlows) {
         accounts.forEach((a) => { init[a.id] = lastByAccount?.[a.id] ? Math.round(lastByAccount[a.id]) : 0; });
         return init;
       });
+      const [includedTransferIds, setIncludedTransferIds] = useState(() => pendingTransfers.map(tr => tr.id));
 
       if (!open) return null;
 
@@ -1749,16 +1751,36 @@ function buildWealthDecomposition(monthlySnapshots, allCashFlows) {
         if (!periodeTouched) setPeriode(v.slice(0, 7));
       };
 
+      const toggleTransfer = (id) =>
+        setIncludedTransferIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
+
+      const computedFlows = useMemo(() => {
+        const flows = {};
+        includedTransferIds.forEach(id => {
+           const tr = pendingTransfers.find(t => t.id === id);
+           if (tr) {
+             if (tr.sourceAccountId && tr.sourceAccountId !== "externe") {
+               flows[tr.sourceAccountId] = (flows[tr.sourceAccountId] || 0) - tr.amount;
+             }
+             if (tr.destinationAccountId && tr.destinationAccountId !== "externe") {
+               flows[tr.destinationAccountId] = (flows[tr.destinationAccountId] || 0) + tr.amount;
+             }
+           }
+        });
+        return flows;
+      }, [includedTransferIds, pendingTransfers]);
+
       const handleSave = () => {
         onSave({
           id: `m-${Date.now()}`,
           date: new Date(date).toISOString(),
           periode,
           byAccount: Object.fromEntries(Object.entries(byAccount).map(([k, v]) => [k, Number(v) || 0])),
-          flows: {},
+          flows: computedFlows,
+          transferIds: includedTransferIds,
           totalWealth: Math.round(total),
           source: "mixte",
-        });
+        }, includedTransferIds);
         onClose();
       };
 
@@ -1799,6 +1821,30 @@ function buildWealthDecomposition(monthlySnapshots, allCashFlows) {
               ))}
             </div>
 
+            {pendingTransfers.length > 0 && (
+              <div className="rounded p-3 mt-4" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
+                <div className="text-xs mb-2 flex items-center gap-1" style={{ color: t.textMuted }}>
+                  <ArrowLeftRight size={12} /> Virements du mois à intégrer
+                </div>
+                <div className="space-y-1">
+                  {pendingTransfers.map((tr) => (
+                    <label key={tr.id} className="flex items-center justify-between text-xs cursor-pointer">
+                      <span className="flex items-center gap-2" style={{ color: t.text }}>
+                        <input type="checkbox" checked={includedTransferIds.includes(tr.id)} onChange={() => toggleTransfer(tr.id)} />
+                        {tr.label} · {transferAccountName(tr.sourceAccountId)} → {transferAccountName(tr.destinationAccountId)}
+                      </span>
+                      <span style={{ color: t.text, fontFamily: "ui-monospace, monospace" }}>{fmtEUR(tr.amount)}</span>
+                    </label>
+                  ))}
+                </div>
+                {includedTransferIds.length > 0 && (
+                  <div className="mt-2 pt-2 border-t text-[10px]" style={{ borderColor: t.border, color: t.textMuted }}>
+                    Ces virements alimenteront automatiquement la colonne "Mouvement du mois" dans l'historique.
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="rounded p-3 text-sm mt-4" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
               <div className="flex justify-between"><span style={{ color: t.textMuted }}>Patrimoine total du point</span><span style={{ color: t.text, fontFamily: "ui-monospace, monospace" }}>{fmtEUR(total)}</span></div>
             </div>
@@ -1814,7 +1860,6 @@ function buildWealthDecomposition(monthlySnapshots, allCashFlows) {
         </div>
       );
     }
-
     function DeleteButton({ onConfirm, title }) {
       const t = useTheme();
       const [armed, setArmed] = useState(false);
@@ -2422,24 +2467,91 @@ function buildWealthDecomposition(monthlySnapshots, allCashFlows) {
       const handleValidateTransfer = (id, arrivalDate) =>
         setTransfers((trs) => trs.map((tr) => (tr.id === id ? { ...tr, status: "valide", arrivalDate } : tr)));
       const handleUnlinkTransfer = (id) =>
-        setTransfers((trs) => trs.map((tr) => (tr.id === id ? { ...tr, consumedWeekly: false } : tr)));
+        setTransfers((trs) => trs.map((tr) => (tr.id === id ? { ...tr, consumedWeekly: false, consumedMonthly: false } : tr)));
       const handleAddRecurring = (rt) => setRecurringTransfers((rts) => [...rts, rt]);
       const handleToggleRecurring = (id) => setRecurringTransfers((rts) => rts.map((rt) => (rt.id === id ? { ...rt, active: !rt.active } : rt)));
       const handleDeleteRecurring = (id) => setRecurringTransfers((rts) => rts.filter((rt) => rt.id !== id));
       const handleImportPositions = (accountId, newPositions) =>
         setPositions((prev) => [...prev.filter((p) => p.accountId !== accountId), ...newPositions]);
 
+      // Met à jour intelligemment les virements "orphelins" si on supprime un historique
+      useEffect(() => {
+        if (!loaded) return;
+        const referencedWeekly = new Set(
+          weekly.flatMap((w) => (w.flows || []).map((f) => String(f.id).replace(/-(src|dst)$/, "")))
+        );
+        const referencedMonthly = new Set(
+          monthly.flatMap((m) => m.transferIds || [])
+        );
+        const orphans = transfers.filter((tr) => 
+          (tr.consumedWeekly && !referencedWeekly.has(tr.id)) ||
+          (tr.consumedMonthly && !referencedMonthly.has(tr.id))
+        );
+        if (orphans.length) {
+          const idsToFix = new Set(orphans.map((tr) => tr.id));
+          setTransfers((trs) => trs.map((tr) => {
+            if (!idsToFix.has(tr.id)) return tr;
+            return { 
+              ...tr, 
+              consumedWeekly: referencedWeekly.has(tr.id) ? tr.consumedWeekly : false,
+              consumedMonthly: referencedMonthly.has(tr.id) ? tr.consumedMonthly : false,
+            };
+          }));
+        }
+      }, [loaded, weekly, monthly, transfers]);
+
+      const pendingValidatedTransfers = useMemo(
+        () => transfers.filter((tr) => tr.status === "valide" && !tr.consumedWeekly && BOURSE_ACCOUNTS.some((a) => a.id === tr.sourceAccountId || a.id === tr.destinationAccountId)),
+        [transfers]
+      );
+
+      const pendingMonthlyTransfers = useMemo(
+        () => transfers.filter((tr) => tr.status === "valide" && !tr.consumedMonthly),
+        [transfers]
+      );
+
+      const handleSaveWeekly = (snapshot, consumedTransferIds, isEdit) => {
+        setWeekly((w) => (isEdit ? w.map((x) => (x.id === snapshot.id ? snapshot : x)) : [...w, snapshot]));
+        if (consumedTransferIds?.length) {
+          setTransfers((trs) => trs.map((tr) => consumedTransferIds.includes(tr.id) ? { ...tr, consumedWeekly: true } : tr));
+        }
+      };
+      
+      const handleSaveMonthly = (snap, consumedTransferIds) => {
+        setMonthly((m) => [...m, snap]);
+        if (consumedTransferIds?.length) {
+          setTransfers((trs) => trs.map((tr) => consumedTransferIds.includes(tr.id) ? { ...tr, consumedMonthly: true } : tr));
+        }
+      };
+
+      const handleEditWeekly = (point) => { setEditingWeekly(point); setWeeklyModalKey((k) => k + 1); setWeeklyModalOpen(true); };
+      const handleAddTransfer = (tr) => setTransfers((trs) => [...trs, tr]);
+      const handleValidateTransfer = (id, arrivalDate) =>
+        setTransfers((trs) => trs.map((tr) => (tr.id === id ? { ...tr, status: "valide", arrivalDate } : tr)));
+
       const allFlows = useMemo(() => {
         const monthlyFlows = monthly.flatMap((m) =>
           Object.entries(m.flows || {}).map(([accountId, amount]) => ({ id: `${m.id}-${accountId}`, accountId, date: m.date, amount }))
         );
-        const weeklyFlows = weekly.flatMap((s) => s.flows);
-        const transferFlows = transfers.filter((tr) => tr.status === "valide").flatMap(transferToFlows);
-        const consumedIds = new Set(weeklyFlows.map((f) => f.id));
+        
+        // On évite les doubles comptages : si un virement est validé dans un point mensuel, il ne doit plus être compté indépendamment
+        const consumedMonthlyTransferIds = new Set(transfers.filter(tr => tr.consumedMonthly).map(tr => tr.id));
+
+        const weeklyFlows = weekly.flatMap((s) => s.flows).filter(f => {
+          const trId = String(f.id).replace(/-(src|dst)$/, "");
+          return !consumedMonthlyTransferIds.has(trId);
+        });
+
+        const transferFlows = transfers
+          .filter((tr) => tr.status === "valide" && !tr.consumedMonthly)
+          .flatMap(transferToFlows);
+          
+        const consumedWeeklyIds = new Set(weekly.flatMap(s => s.flows).map((f) => f.id));
+        
         return [
           ...monthlyFlows,
           ...weeklyFlows,
-          ...transferFlows.filter((f) => !consumedIds.has(f.id)),
+          ...transferFlows.filter((f) => !consumedWeeklyIds.has(f.id)),
         ];
       }, [monthly, weekly, transfers]);
 
@@ -2459,10 +2571,13 @@ function buildWealthDecomposition(monthlySnapshots, allCashFlows) {
       const cumGainPct = cumSavings ? cumGain / (monthlyMetrics[0]?.wealth || 1) : 0;
       const avgAnnualGainPlacement = yearlyMetrics.length ? yearlyMetrics.reduce((s, y) => s + y.gain, 0) / yearlyMetrics.length : 0;
       const avgAnnualGainEpargne = yearlyMetrics.length ? yearlyMetrics.reduce((s, y) => s + y.epargne, 0) / yearlyMetrics.length : 0;
+
       const yearlyYields = yearlyMetrics.filter(y => y.startWealth > 0);
       const avgYield = yearlyYields.length > 0 
-      ? yearlyYields.reduce((s, y) => s + y.yieldPct, 0) / yearlyYields.length 
-      : 0;
+        ? yearlyYields.reduce((s, y) => s + y.yieldPct, 0) / yearlyYields.length 
+        : 0;
+
+      const NAV_ITEMS = [
       const NAV_ITEMS = [
         { id: "dashboard", label: "Tableau de bord" },
         { id: "positions", label: "Positions" },
@@ -2695,9 +2810,10 @@ function buildWealthDecomposition(monthlySnapshots, allCashFlows) {
             key={monthlyModalKey}
             open={monthlyModalOpen}
             onClose={() => setMonthlyModalOpen(false)}
-            onSave={(snap) => setMonthly((m) => [...m, snap])}
+            onSave={handleSaveMonthly}
             lastByAccount={lastMonthly?.byAccount}
             onImportPositions={handleImportPositions}
+            pendingTransfers={pendingMonthlyTransfers}
           />
         </ThemeCtx.Provider>
       );
