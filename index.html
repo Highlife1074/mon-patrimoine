@@ -2484,8 +2484,19 @@
         }
       };
 
+      // L'historique importé (source "csv") fait foi jusqu'à son dernier relevé : les saisies faites dans l'app
+      // jusqu'à cette date (points mensuels, points hebdo, virements) sont déjà incluses et seraient comptées deux fois.
+      const seedEnd = useMemo(
+        () => monthly.filter((m) => m.source === "csv").reduce((max, m) => (m.date > max ? m.date : max), ""),
+        [monthly]
+      );
+      const monthlyEff = useMemo(
+        () => monthly.filter((m) => m.source === "csv" || m.date > seedEnd).sort((a, b) => new Date(a.date) - new Date(b.date)),
+        [monthly, seedEnd]
+      );
+
       const allFlows = useMemo(() => {
-        const monthlyFlows = monthly.flatMap((m) =>
+        const monthlyFlows = monthlyEff.flatMap((m) =>
           Object.entries(m.flows || {}).map(([accountId, amount]) => ({ id: `${m.id}-${accountId}`, accountId, date: m.date, amount }))
         );
         
@@ -2505,17 +2516,17 @@
         
         return [
           ...monthlyFlows,
-          ...weeklyFlows,
-          ...transferFlows.filter((f) => !consumedWeeklyIds.has(f.id)),
+          ...weeklyFlows.filter((f) => f.date > seedEnd),
+          ...transferFlows.filter((f) => !consumedWeeklyIds.has(f.id) && f.date > seedEnd),
         ];
-      }, [monthly, weekly, transfers]);
+      }, [monthlyEff, weekly, transfers, seedEnd]);
 
-      const monthlyMetrics = useMemo(() => buildMonthlyMetrics(monthly, allFlows), [monthly, allFlows]);
+      const monthlyMetrics = useMemo(() => buildMonthlyMetrics(monthlyEff, allFlows), [monthlyEff, allFlows]);
       const yearlyMetrics = useMemo(() => buildYearlyMetrics(monthlyMetrics), [monthlyMetrics]);
       const categoryAlloc = useMemo(() => aggregatePositions(positions, "category"), [positions]);
       const sectorAlloc = useMemo(() => aggregateSectors(positions), [positions]);
 
-      const lastMonthly = monthly[monthly.length - 1];
+      const lastMonthly = monthlyEff[monthlyEff.length - 1];
       const lastWeek = weekly[weekly.length - 1];
       const lastMetric = monthlyMetrics[monthlyMetrics.length - 1];
       const cumSavings = monthlyMetrics.reduce((s, m) => s + m.epargne, 0);
