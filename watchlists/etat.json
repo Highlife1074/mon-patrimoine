@@ -1,0 +1,232 @@
+{
+  "derniere_actualisation": "2026-10-20",
+  "prochaine_actualisation": "2026-10-22 (jeudi)",
+  "watchlists": {
+    "tendance": {
+      "tradingview_id": 351707303,
+      "valeurs": [
+        {
+          "symbol": "NASDAQ:DOCU",
+          "entry": 81.18,
+          "sl": 74.11,
+          "tp1": 91.77,
+          "tp2": 98.84,
+          "tp3": 109.44,
+          "risk_pct": 8.7,
+          "atr": 2.826,
+          "ref_high": 80.61,
+          "ref_low": 67.96,
+          "next_earnings": "2026-12-03",
+          "statut": "attente_entree",
+          "alertes": {
+            "entree": 5889147504
+          },
+          "ajoute_le": "2026-10-20"
+        },
+        {
+          "symbol": "NYSE:SN",
+          "entry": 200.3,
+          "sl": 183.65,
+          "tp1": 225.28,
+          "tp2": 241.93,
+          "tp3": 266.9,
+          "risk_pct": 8.3,
+          "atr": 6.66,
+          "ref_high": 198.97,
+          "ref_low": 181.1,
+          "next_earnings": "2026-11-04",
+          "statut": "attente_entree",
+          "alertes": {
+            "entree": 5889147513
+          },
+          "ajoute_le": "2026-10-20"
+        },
+        {
+          "symbol": "NYSE:A",
+          "entry": 178.41,
+          "sl": 166.69,
+          "tp1": 195.98,
+          "tp2": 207.69,
+          "tp3": 225.26,
+          "risk_pct": 6.6,
+          "atr": 4.685,
+          "ref_high": 177.47,
+          "ref_low": 163.32,
+          "next_earnings": "2026-11-30",
+          "statut": "attente_entree",
+          "alertes": {
+            "entree": 5889147525
+          },
+          "ajoute_le": "2026-10-20"
+        },
+        {
+          "symbol": "NASDAQ:TEAM",
+          "entry": 225.57,
+          "sl": 202.17,
+          "tp1": 260.68,
+          "tp2": 284.09,
+          "tp3": 319.2,
+          "risk_pct": 10.4,
+          "atr": 9.363,
+          "ref_high": 223.7,
+          "ref_low": 193.49,
+          "next_earnings": "2026-11-05",
+          "statut": "attente_entree",
+          "alertes": {
+            "entree": 5889147534
+          },
+          "ajoute_le": "2026-10-20"
+        },
+        {
+          "symbol": "EURONEXT:TEP",
+          "entry": 77.38,
+          "sl": 71.59,
+          "tp1": 86.08,
+          "tp2": 91.88,
+          "tp3": 100.57,
+          "risk_pct": 7.5,
+          "atr": 2.319,
+          "ref_high": 76.92,
+          "ref_low": 69.74,
+          "next_earnings": "2027-02-18",
+          "statut": "attente_entree",
+          "alertes": {
+            "entree": 5889147542
+          },
+          "ajoute_le": "2026-10-20"
+        },
+        {
+          "symbol": "EURONEXT:ITP",
+          "entry": 32.84,
+          "sl": 31.06,
+          "tp1": 35.52,
+          "tp2": 37.3,
+          "tp3": 39.97,
+          "risk_pct": 5.4,
+          "atr": 0.713,
+          "ref_high": 32.7,
+          "ref_low": 30.02,
+          "next_earnings": "2027-02-24",
+          "statut": "attente_entree",
+          "alertes": {
+            "entree": 5889147807
+          },
+          "ajoute_le": "2026-10-20"
+        }
+      ]
+    },
+    "retournement": {
+      "tradingview_id": 351707304,
+      "valeurs": [
+        {
+          "symbol": "NASDAQ:AVGO",
+          "entry": 356.54,
+          "sl": 326.29,
+          "tp1": 401.93,
+          "tp2": 432.19,
+          "tp3": 477.58,
+          "risk_pct": 8.5,
+          "atr": 11.472,
+          "ref_high": 354.25,
+          "ref_low": 328.58,
+          "next_earnings": "2026-12-10",
+          "statut": "attente_entree",
+          "alertes": {
+            "entree": 5889147815
+          },
+          "ajoute_le": "2026-10-20"
+        },
+        {
+          "symbol": "NASDAQ:NFLX",
+          "entry": 73.45,
+          "sl": 67.73,
+          "tp1": 82.03,
+          "tp2": 87.75,
+          "tp3": 96.34,
+          "risk_pct": 7.8,
+          "atr": 1.907,
+          "ref_high": 73.07,
+          "ref_low": 66.54,
+          "next_earnings": "2027-01-26",
+          "statut": "attente_entree",
+          "alertes": {
+            "entree": 5889147826
+          },
+          "ajoute_le": "2026-10-20"
+        },
+        {
+          "symbol": "NASDAQ:GFS",
+          "entry": 50.28,
+          "sl": 44.64,
+          "tp1": 58.74,
+          "tp2": 64.39,
+          "tp3": 72.85,
+          "risk_pct": 11.2,
+          "atr": 2.41,
+          "ref_high": 49.8,
+          "ref_low": 45.122,
+          "next_earnings": "2026-11-04",
+          "statut": "attente_entree",
+          "alertes": {
+            "entree": 5889147833
+          },
+          "ajoute_le": "2026-10-20"
+        },
+        {
+          "symbol": "EURONEXT:RMS",
+          "entry": 1360.1,
+          "sl": 1252.9,
+          "tp1": 1521.0,
+          "tp2": 1628.2,
+          "tp3": 1789.0,
+          "risk_pct": 7.9,
+          "atr": 35.74,
+          "ref_high": 1353,
+          "ref_low": 1255,
+          "next_earnings": "2027-02-11",
+          "statut": "attente_entree",
+          "alertes": {
+            "entree": 5889147848
+          },
+          "ajoute_le": "2026-10-20"
+        },
+        {
+          "symbol": "EURONEXT:ORA",
+          "entry": 14.63,
+          "sl": 13.73,
+          "tp1": 15.98,
+          "tp2": 16.88,
+          "tp3": 18.23,
+          "risk_pct": 6.2,
+          "atr": 0.3,
+          "ref_high": 14.57,
+          "ref_low": 13.515,
+          "next_earnings": "2027-02-18",
+          "statut": "attente_entree",
+          "alertes": {
+            "entree": 5889147858
+          },
+          "ajoute_le": "2026-10-20"
+        },
+        {
+          "symbol": "EURONEXT:DG",
+          "entry": 108.95,
+          "sl": 103.85,
+          "tp1": 116.6,
+          "tp2": 121.7,
+          "tp3": 129.35,
+          "risk_pct": 4.7,
+          "atr": 2.002,
+          "ref_high": 108.55,
+          "ref_low": 104.25,
+          "next_earnings": "2027-02-10",
+          "statut": "attente_entree",
+          "alertes": {
+            "entree": 5889147866
+          },
+          "ajoute_le": "2026-10-20"
+        }
+      ]
+    }
+  }
+}
