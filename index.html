@@ -35,7 +35,7 @@
     import {
       Wallet, TrendingUp, PiggyBank, Percent, Plus, Moon, Sun,
       ChevronDown, ChevronRight, ChevronLeft, X, ArrowUpRight, ArrowDownRight,
-      Link2, Check, Clock, ArrowLeftRight, RefreshCw, Download, Upload, Pencil, LogOut
+      Link2, Check, Clock, ArrowLeftRight, RefreshCw, Download, Upload, LogOut
     } from "lucide-react";
     
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
@@ -56,24 +56,6 @@
     const auth = getAuth(app);
 
     // ================== FONCTIONS MATHEMATHIQUES ==================
-    function weeklyGainBourse(valueT, valuePrev, flows) {
-      const netFlows = flows.reduce((s, f) => s + f.amount, 0);
-      return valueT - valuePrev - netFlows;
-    }
-
-    function buildWeeklySeries(weeklySnapshots) {
-      let cumGain = 0;
-      let cumCapital = 0;
-      return weeklySnapshots.map((snap, i) => {
-        const prev = i === 0 ? null : weeklySnapshots[i - 1];
-        const gain = prev ? weeklyGainBourse(snap.bourseValue, prev.bourseValue, snap.flows) : 0;
-        const flowSum = snap.flows.reduce((s, f) => s + f.amount, 0);
-        cumGain += gain;
-        cumCapital += flowSum;
-        return { ...snap, gain, cumGain, cumCapital, flowSum };
-      });
-    }
-
     const CASH_ACCOUNTS = ["lcl", "revolut"];
 
     function buildWealthDecomposition(monthlySnapshots, allCashFlows) {
@@ -1298,7 +1280,6 @@
           departureDate: new Date(departureDate).toISOString(),
           status: "attente",
           arrivalDate: null,
-          consumedWeekly: false,
           consumedMonthly: false,
         });
         setLabel(""); setAmount("");
@@ -1385,9 +1366,6 @@
                       {tr.arrivalDate ? fmtDate(tr.arrivalDate) : "—"}
                       {tr.status === "valide" && (
                         <div className="mt-1 flex flex-col gap-0.5" style={{ fontSize: "10px" }}>
-                          <span style={{ color: tr.consumedWeekly ? t.textMuted : t.accent }}>
-                            {tr.consumedWeekly ? "✔ inclus hebdo" : "• attente hebdo"}
-                          </span>
                           <span style={{ color: tr.consumedMonthly ? t.textMuted : t.accent }}>
                             {tr.consumedMonthly ? "✔ inclus mensuel" : "• attente mensuel"}
                           </span>
@@ -1413,7 +1391,7 @@
                           </button>
                         </div>
                       )}
-                      {tr.status === "valide" && (tr.consumedWeekly || tr.consumedMonthly) && (
+                      {tr.status === "valide" && tr.consumedMonthly && (
                         <button
                           onClick={() => onUnlink(tr.id)}
                           className="text-xs px-2 py-1 rounded"
@@ -1431,120 +1409,6 @@
         </div>
       );
     }
-    function WeeklySnapshotModal({ open, onClose, onSave, lastByAccount, pendingTransfers, onImportPositions, editing }) {
-      const t = useTheme();
-      const [date, setDate] = useState(() => (editing ? editing.date.slice(0, 10) : new Date().toISOString().slice(0, 10)));
-      const [byAccount, setByAccount] = useState(() => {
-        const init = {};
-        BOURSE_ACCOUNTS.forEach((a) => { init[a.id] = editing ? (editing.byAccount?.[a.id] ?? 0) : (lastByAccount?.[a.id] ?? 0); });
-        return init;
-      });
-      const [includedTransferIds, setIncludedTransferIds] = useState(() => pendingTransfers.map((tr) => tr.id));
-
-      if (!open) return null;
-
-      const bourseValue = Object.values(byAccount).reduce((s, v) => s + (Number(v) || 0), 0);
-      const lastBourseValue = Object.values(lastByAccount || {}).reduce((s, v) => s + (Number(v) || 0), 0);
-      const includedTransfers = pendingTransfers.filter((tr) => includedTransferIds.includes(tr.id));
-      const newFlows = includedTransfers.flatMap(transferToFlows);
-      const flows = editing ? [...(editing.flows || []), ...newFlows] : newFlows;
-      const netFlows = flows.filter((f) => BOURSE_ACCOUNTS.some((a) => a.id === f.accountId)).reduce((s, f) => s + f.amount, 0);
-      const impliedGain = bourseValue - lastBourseValue - netFlows;
-
-      const toggleTransfer = (id) =>
-        setIncludedTransferIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
-
-      const handleSave = () => {
-        onSave(
-          {
-            id: editing ? editing.id : `w-${Date.now()}`,
-            date: new Date(date).toISOString(),
-            byAccount: Object.fromEntries(Object.entries(byAccount).map(([k, v]) => [k, Number(v) || 0])),
-            bourseValue: Math.round(bourseValue),
-            flows,
-          },
-          includedTransfers.map((tr) => tr.id),
-          !!editing
-        );
-        onClose();
-      };
-
-      return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.55)" }} onClick={onClose}>
-          <div
-            className="w-full max-w-md rounded-lg p-6 max-h-[90vh] overflow-y-auto"
-            style={{ background: t.panel, border: `1px solid ${t.border}` }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between mb-4">
-              <h3 style={{ color: t.text }}>{editing ? "Modifier le point hebdomadaire" : "Nouveau point hebdomadaire"}</h3>
-              <button onClick={onClose}><X size={18} color={t.textMuted} /></button>
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs" style={{ color: t.textMuted }}>Date</label>
-                <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
-                  className="w-full mt-1 rounded px-3 py-2 text-sm" style={{ background: t.panelAlt, color: t.text, border: `1px solid ${t.border}` }} />
-              </div>
-
-              <div className="space-y-2">
-                <div className="text-xs" style={{ color: t.textMuted }}>Valeur par compte bourse</div>
-                {BOURSE_ACCOUNTS.map((a) => (
-                  <MonthlyAccountRow
-                    key={a.id}
-                    account={a}
-                    value={byAccount[a.id]}
-                    onChange={(v) => setByAccount((b) => ({ ...b, [a.id]: v }))}
-                    onImportPositions={onImportPositions}
-                  />
-                ))}
-                <div className="flex justify-between text-sm pt-2 px-1" style={{ borderTop: `1px solid ${t.border}` }}>
-                  <span style={{ color: t.textMuted }}>Total bourse</span>
-                  <span style={{ color: t.text, fontFamily: "ui-monospace, monospace" }}>{fmtEUR(bourseValue)}</span>
-                </div>
-              </div>
-
-              {pendingTransfers.length > 0 && (
-                <div className="rounded p-3" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
-                  <div className="text-xs mb-2 flex items-center gap-1" style={{ color: t.textMuted }}>
-                    <ArrowLeftRight size={12} /> Virements reçus à intégrer
-                  </div>
-                  <div className="space-y-1">
-                    {pendingTransfers.map((tr) => (
-                      <label key={tr.id} className="flex items-center justify-between text-xs cursor-pointer">
-                        <span className="flex items-center gap-2" style={{ color: t.text }}>
-                          <input type="checkbox" checked={includedTransferIds.includes(tr.id)} onChange={() => toggleTransfer(tr.id)} />
-                          {tr.label} · {transferAccountName(tr.sourceAccountId)} → {transferAccountName(tr.destinationAccountId)}
-                        </span>
-                        <span style={{ color: t.text, fontFamily: "ui-monospace, monospace" }}>{fmtEUR(tr.amount)}</span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="rounded p-3 text-sm" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
-                <div className="flex justify-between"><span style={{ color: t.textMuted }}>Flux nets saisis</span><span style={{ color: t.text }}>{fmtEUR(netFlows)}</span></div>
-                <div className="flex justify-between mt-1">
-                  <span style={{ color: t.textMuted }}>Gain boursier net implicite</span>
-                  <span style={{ color: impliedGain >= 0 ? t.gain : t.loss }}>{fmtEUR(impliedGain)}</span>
-                </div>
-              </div>
-            </div>
-
-            <button
-              onClick={handleSave}
-              className="w-full mt-5 rounded py-2 text-sm"
-              style={{ background: t.accent, color: t.bg }}
-            >
-              {editing ? "Enregistrer les modifications" : "Enregistrer le point hebdo"}
-            </button>
-          </div>
-        </div>
-      );
-    }
-
     function MonthlyAccountRow({ account, value, onChange, onImportPositions }) {
       const t = useTheme();
       const [source, setSource] = useState("manuel");
@@ -1889,166 +1753,6 @@
       );
     }
 
-    function WeeklyHistoryTab({ weekly, setWeekly, monthly, onEdit, setTransfers }) {
-      const t = useTheme();
-      const scrollRef = useRef(null);
-      const sorted = useMemo(() => [...weekly].sort((a, b) => new Date(a.date) - new Date(b.date)), [weekly]);
-      const displayed = useMemo(
-        () => sorted.map((r, i) => ({ row: r, prev: i > 0 ? sorted[i - 1] : null })).reverse(),
-        [sorted]
-      );
-
-      const monthlyById = useMemo(() => new Map(monthly.map((m) => [m.id, m])), [monthly]);
-      const flowSumFor = (r) => {
-        if (r.flows && r.flows.length > 0) {
-          return r.flows
-            .filter((f) => BOURSE_ACCOUNTS.some((a) => a.id === f.accountId))
-            .reduce((s, f) => s + f.amount, 0);
-        }
-        const m = monthlyById.get(r.id.replace(/^w-/, ""));
-        if (!m) return 0;
-        return BOURSE_ACCOUNTS.reduce((s, a) => s + (m.flows?.[a.id] || 0), 0);
-      };
-
-      const cumGainById = useMemo(() => {
-        const map = new Map();
-        let cum = 0;
-        sorted.forEach((r, i) => {
-          if (i > 0) {
-            const prev = sorted[i - 1];
-            const variation = r.bourseValue - prev.bourseValue;
-            cum += variation - flowSumFor(r);
-          }
-          map.set(r.id, cum);
-        });
-        return map;
-      }, [sorted, monthlyById]);
-
-      const updateValue = (id, accountId, value) => {
-        setWeekly((rows) => rows.map((r) => {
-          if (r.id !== id) return r;
-          const byAccount = { ...r.byAccount, [accountId]: Number(value) || 0 };
-          const bourseValue = Object.values(byAccount).reduce((s, v) => s + (Number(v) || 0), 0);
-          return { ...r, byAccount, bourseValue: Math.round(bourseValue) };
-        }));
-      };
-
-      const updateDate = (id, newDate) => {
-        if (!newDate) return;
-        setWeekly((rows) => rows.map((r) => (r.id === id ? { ...r, date: new Date(newDate).toISOString() } : r)));
-      };
-
-      const updateFlow = (id, value) => {
-        const row = weekly.find((r) => r.id === id);
-        const oldTransferIds = new Set(
-          (row?.flows || [])
-            .map((f) => String(f.id).replace(/-(src|dst)$/, ""))
-            .filter((tid) => tid !== `${id}-manuel`)
-        );
-        setWeekly((rows) => rows.map((r) => {
-          if (r.id !== id) return r;
-          const amount = Number(value) || 0;
-          return { ...r, flows: amount ? [{ id: `${id}-manuel`, accountId: null, date: r.date, amount }] : [] };
-        }));
-        if (oldTransferIds.size > 0) {
-          setTransfers((trs) => trs.map((tr) => (oldTransferIds.has(tr.id) ? { ...tr, consumedWeekly: false } : tr)));
-        }
-      };
-
-      const deleteRow = (id) => setWeekly((rows) => rows.filter((r) => r.id !== id));
-      const cellStyle = { background: t.panelAlt, color: t.text, border: `1px solid ${t.border}`, fontFamily: "ui-monospace, monospace" };
-
-      return (
-        <div>
-          <HScrollBar targetRef={scrollRef} />
-          <div className="overflow-x-auto" ref={scrollRef}>
-            <table className="text-xs" style={{ borderCollapse: "collapse" }}>
-              <thead>
-                <tr>
-                  <th className="text-left py-2 px-2 sticky left-0 z-10" style={{ color: t.textMuted, background: t.panel }}>Date</th>
-                  {BOURSE_ACCOUNTS.map((a) => (
-                    <th key={a.id} className="text-right py-2 px-2" style={{ color: t.textMuted, whiteSpace: "nowrap" }}>{a.name}</th>
-                  ))}
-                  <th className="text-right py-2 px-2" style={{ color: t.textMuted }}>Total bourse</th>
-                  <th className="text-right py-2 px-2" style={{ color: t.textMuted }}>Flux net</th>
-                  <th className="text-right py-2 px-2" style={{ color: t.textMuted }}>Variation</th>
-                  <th className="text-right py-2 px-2" style={{ color: t.textMuted }}>Gain placement</th>
-                  <th className="text-right py-2 px-2" style={{ color: t.textMuted }}>Gain cumulé</th>
-                  <th className="py-2 px-2" />
-                </tr>
-              </thead>
-              <tbody>
-                {displayed.map(({ row: r, prev }) => {
-                  const flowSum = flowSumFor(r);
-                  const variation = prev ? r.bourseValue - prev.bourseValue : null;
-                  const gainPlacement = prev ? variation - flowSum : null;
-                  return (
-                    <tr key={r.id} style={{ borderBottom: `1px solid ${t.border}` }}>
-                      <td className="py-1 px-2 sticky left-0 z-10 align-top" style={{ background: t.panel }}>
-                        <input
-                          type="date"
-                          value={r.date.slice(0, 10)}
-                          onChange={(e) => updateDate(r.id, e.target.value)}
-                          className="rounded px-1 py-1"
-                          style={{ ...cellStyle, width: 118 }}
-                        />
-                      </td>
-                      {BOURSE_ACCOUNTS.map((a) => (
-                        <td key={a.id} className="py-1 px-1 align-top">
-                          <input
-                            type="number"
-                            value={r.byAccount[a.id] ?? 0}
-                            onChange={(e) => updateValue(r.id, a.id, e.target.value)}
-                            className="w-24 rounded px-1 py-1 text-right"
-                            style={cellStyle}
-                          />
-                        </td>
-                      ))}
-                      <td className="py-1 px-2 text-right align-top" style={{ color: t.text, fontFamily: "ui-monospace, monospace" }}>{fmtEUR(r.bourseValue)}</td>
-                      <td className="py-1 px-1 align-top">
-                        <input
-                          type="number"
-                          value={flowSum}
-                          onChange={(e) => updateFlow(r.id, e.target.value)}
-                          title="Flux net de la semaine (apport +, retrait -)"
-                          className="w-24 rounded px-1 py-1 text-right"
-                          style={{ ...cellStyle, color: flowSum >= 0 ? t.gain : t.loss }}
-                        />
-                      </td>
-                      <td className="py-1 px-2 text-right align-top" style={{ color: t.textMuted, fontFamily: "ui-monospace, monospace" }}>
-                        {variation === null ? "—" : `${variation >= 0 ? "+" : ""}${fmtEUR(variation)}`}
-                      </td>
-                      <td className="py-1 px-2 text-right align-top" style={{ color: gainPlacement === null ? t.textMuted : gainPlacement >= 0 ? t.gain : t.loss, fontFamily: "ui-monospace, monospace" }}>
-                        {gainPlacement === null ? "—" : `${gainPlacement >= 0 ? "+" : ""}${fmtEUR(gainPlacement)}`}
-                      </td>
-                      <td className="py-1 px-2 text-right align-top" style={{ color: (cumGainById.get(r.id) || 0) >= 0 ? t.gain : t.loss, fontFamily: "ui-monospace, monospace" }}>
-                        {(() => { const c = cumGainById.get(r.id) || 0; return `${c >= 0 ? "+" : ""}${fmtEUR(c)}`; })()}
-                      </td>
-                      <td className="py-1 px-2 align-top">
-                        <div className="flex items-center gap-1">
-                          {onEdit && (
-                            <button
-                              type="button"
-                              onClick={() => onEdit(r)}
-                              className="p-1 rounded"
-                              style={{ color: t.textMuted }}
-                            >
-                              <Pencil size={13} />
-                            </button>
-                          )}
-                          <DeleteButton title="Supprimer ce point (double clic)" onConfirm={() => deleteRow(r.id)} />
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      );
-    }
-
     function HistoryTab({ monthly, setMonthly }) {
       const t = useTheme();
       const scrollRef = useRef(null);
@@ -2246,21 +1950,11 @@
       const t = THEMES[themeName];
       const [positions, setPositions] = useState(stockPositions);
       const [monthly, setMonthly] = useState(initialMonthlySnapshots);
-      const [weekly, setWeekly] = useState(() => {
-        const m = initialMonthlySnapshots[initialMonthlySnapshots.length - 1];
-        return [{
-          id: `w-${m.id}`,
-          date: m.date,
-          byAccount: { cto: m.byAccount.cto, ibkr: m.byAccount.ibkr, pea_phil: m.byAccount.pea_phil, pea_ghiz: m.byAccount.pea_ghiz },
-          bourseValue: m.byAccount.cto + m.byAccount.ibkr + m.byAccount.pea_phil + m.byAccount.pea_ghiz,
-          flows: [],
-        }];
-      });
+      // Suivi hebdo retiré (pas fiable) : les anciens points sont conservés tels quels dans la sauvegarde,
+      // mais ne sont plus affichés ni utilisés dans les calculs.
+      const [weeklyArchive, setWeeklyArchive] = useState([]);
       const [transfers, setTransfers] = useState(initialTransfers);
       const [recurringTransfers, setRecurringTransfers] = useState([]);
-      const [weeklyModalOpen, setWeeklyModalOpen] = useState(false);
-      const [editingWeekly, setEditingWeekly] = useState(null);
-      const [weeklyModalKey, setWeeklyModalKey] = useState(0);
       const [monthlyModalOpen, setMonthlyModalOpen] = useState(false);
       const [monthlyModalKey, setMonthlyModalKey] = useState(0);
       const [tab, setTab] = useState("dashboard");
@@ -2291,12 +1985,7 @@
                   setMonthly([...initialMonthlySnapshots, ...saved.monthly.filter((m) => !seedIds.has(m.id))]);
                 }
               }
-              if (saved.weekly) {
-                const seedWeeklyId = `w-${initialMonthlySnapshots[initialMonthlySnapshots.length - 1].id}`;
-                const userWeekly = saved.weekly.filter((w) => !/^w-m\d+$/.test(w.id) || w.id === seedWeeklyId);
-                const hasSeed = userWeekly.some((w) => w.id === seedWeeklyId);
-                setWeekly((init) => (hasSeed ? userWeekly : [...init, ...userWeekly]));
-              }
+              if (saved.weekly) setWeeklyArchive(saved.weekly);
               if (saved.transfers) setTransfers(saved.transfers);
               if (saved.recurringTransfers) setRecurringTransfers(saved.recurringTransfers);
             }
@@ -2316,7 +2005,7 @@
             await setDoc(docRef, {
               positions,
               monthly,
-              weekly,
+              weekly: weeklyArchive,
               transfers,
               recurringTransfers,
               seedVersion: SEED_VERSION,
@@ -2330,38 +2019,18 @@
           }
         }, 800); 
         return () => clearTimeout(delai);
-      }, [positions, monthly, weekly, transfers, recurringTransfers, loaded]);
-
-      useEffect(() => {
-        if (!loaded) return;
-        const referenced = new Set(
-          weekly.flatMap((w) => (w.flows || []).map((f) => String(f.id).replace(/-(src|dst)$/, "")))
-        );
-        const orphans = transfers.filter((tr) => tr.consumedWeekly && !referenced.has(tr.id));
-        if (orphans.length) {
-          const ids = new Set(orphans.map((tr) => tr.id));
-          setTransfers((trs) => trs.map((tr) => (ids.has(tr.id) ? { ...tr, consumedWeekly: false } : tr)));
-        }
-      }, [loaded, weekly, transfers]);
+      }, [positions, monthly, weeklyArchive, transfers, recurringTransfers, loaded]);
 
       const handleReset = () => {
         setPositions(stockPositions);
         setMonthly(initialMonthlySnapshots);
-        setWeekly(
-          initialMonthlySnapshots.map((m) => ({
-            id: `w-${m.id}`,
-            date: m.date,
-            byAccount: { cto: m.byAccount.cto, ibkr: m.byAccount.ibkr, pea_phil: m.byAccount.pea_phil, pea_ghiz: m.byAccount.pea_ghiz },
-            bourseValue: m.byAccount.cto + m.byAccount.ibkr + m.byAccount.pea_phil + m.byAccount.pea_ghiz,
-            flows: [],
-          }))
-        );
+        setWeeklyArchive([]);
         setTransfers(initialTransfers);
         setRecurringTransfers([]);
       };
 
       const handleExport = () => {
-        const payload = { positions, monthly, weekly, transfers, recurringTransfers, seedVersion: SEED_VERSION, exportedAt: new Date().toISOString() };
+        const payload = { positions, monthly, weekly: weeklyArchive, transfers, recurringTransfers, seedVersion: SEED_VERSION, exportedAt: new Date().toISOString() };
         const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -2379,24 +2048,13 @@
           const data = JSON.parse(text);
           if (data.positions) setPositions(data.positions);
           if (data.monthly) setMonthly(data.monthly);
-          if (data.weekly) setWeekly(data.weekly);
+          if (data.weekly) setWeeklyArchive(data.weekly);
           if (data.transfers) setTransfers(data.transfers);
           if (data.recurringTransfers) setRecurringTransfers(data.recurringTransfers);
         } catch (e) {
           alert("Fichier de sauvegarde illisible");
         }
       };
-
-      const pendingValidatedTransfers = useMemo(
-        () =>
-          transfers.filter(
-            (tr) =>
-              tr.status === "valide" &&
-              !tr.consumedWeekly &&
-              BOURSE_ACCOUNTS.some((a) => a.id === tr.sourceAccountId || a.id === tr.destinationAccountId)
-          ),
-        [transfers]
-      );
 
       useEffect(() => {
         const today = new Date();
@@ -2417,7 +2075,6 @@
                   departureDate: date.toISOString(),
                   status: "attente",
                   arrivalDate: null,
-                  consumedWeekly: false,
                   recurringId: rt.id,
                 });
               }
@@ -2427,19 +2084,11 @@
         });
       }, [recurringTransfers]);
 
-      const handleSaveWeekly = (snapshot, consumedTransferIds, isEdit) => {
-        setWeekly((w) => (isEdit ? w.map((x) => (x.id === snapshot.id ? snapshot : x)) : [...w, snapshot]));
-        if (consumedTransferIds?.length) {
-          setTransfers((trs) => trs.map((tr) => (consumedTransferIds.includes(tr.id) ? { ...tr, consumedWeekly: true } : tr)));
-        }
-      };
-      
-      const handleEditWeekly = (point) => { setEditingWeekly(point); setWeeklyModalKey((k) => k + 1); setWeeklyModalOpen(true); };
       const handleAddTransfer = (tr) => setTransfers((trs) => [...trs, tr]);
       const handleValidateTransfer = (id, arrivalDate) =>
         setTransfers((trs) => trs.map((tr) => (tr.id === id ? { ...tr, status: "valide", arrivalDate } : tr)));
       const handleUnlinkTransfer = (id) =>
-        setTransfers((trs) => trs.map((tr) => (tr.id === id ? { ...tr, consumedWeekly: false, consumedMonthly: false } : tr)));
+        setTransfers((trs) => trs.map((tr) => (tr.id === id ? { ...tr, consumedMonthly: false } : tr)));
       const handleAddRecurring = (rt) => setRecurringTransfers((rts) => [...rts, rt]);
       const handleToggleRecurring = (id) => setRecurringTransfers((rts) => rts.map((rt) => (rt.id === id ? { ...rt, active: !rt.active } : rt)));
       const handleDeleteRecurring = (id) => setRecurringTransfers((rts) => rts.filter((rt) => rt.id !== id));
@@ -2449,28 +2098,15 @@
       // Met à jour intelligemment les virements "orphelins" si on supprime un historique
       useEffect(() => {
         if (!loaded) return;
-        const referencedWeekly = new Set(
-          weekly.flatMap((w) => (w.flows || []).map((f) => String(f.id).replace(/-(src|dst)$/, "")))
-        );
         const referencedMonthly = new Set(
           monthly.flatMap((m) => m.transferIds || [])
         );
-        const orphans = transfers.filter((tr) => 
-          (tr.consumedWeekly && !referencedWeekly.has(tr.id)) ||
-          (tr.consumedMonthly && !referencedMonthly.has(tr.id))
-        );
+        const orphans = transfers.filter((tr) => tr.consumedMonthly && !referencedMonthly.has(tr.id));
         if (orphans.length) {
           const idsToFix = new Set(orphans.map((tr) => tr.id));
-          setTransfers((trs) => trs.map((tr) => {
-            if (!idsToFix.has(tr.id)) return tr;
-            return { 
-              ...tr, 
-              consumedWeekly: referencedWeekly.has(tr.id) ? tr.consumedWeekly : false,
-              consumedMonthly: referencedMonthly.has(tr.id) ? tr.consumedMonthly : false,
-            };
-          }));
+          setTransfers((trs) => trs.map((tr) => (idsToFix.has(tr.id) ? { ...tr, consumedMonthly: false } : tr)));
         }
-      }, [loaded, weekly, monthly, transfers]);
+      }, [loaded, monthly, transfers]);
 
       const pendingMonthlyTransfers = useMemo(
         () => transfers.filter((tr) => tr.status === "valide" && !tr.consumedMonthly),
@@ -2485,7 +2121,7 @@
       };
 
       // L'historique importé (source "csv") fait foi jusqu'à son dernier relevé : les saisies faites dans l'app
-      // jusqu'à cette date (points mensuels, points hebdo, virements) sont déjà incluses et seraient comptées deux fois.
+      // jusqu'à cette date (points mensuels, virements) sont déjà incluses et seraient comptées deux fois.
       const seedEnd = useMemo(
         () => monthly.filter((m) => m.source === "csv").reduce((max, m) => (m.date > max ? m.date : max), ""),
         [monthly]
@@ -2500,26 +2136,16 @@
           Object.entries(m.flows || {}).map(([accountId, amount]) => ({ id: `${m.id}-${accountId}`, accountId, date: m.date, amount }))
         );
         
-        // On évite les doubles comptages : si un virement est validé dans un point mensuel, il ne doit plus être compté indépendamment
-        const consumedMonthlyTransferIds = new Set(transfers.filter(tr => tr.consumedMonthly).map(tr => tr.id));
-
-        const weeklyFlows = weekly.flatMap((s) => s.flows).filter(f => {
-          const trId = String(f.id).replace(/-(src|dst)$/, "");
-          return !consumedMonthlyTransferIds.has(trId);
-        });
-
+        // On évite les doubles comptages : un virement intégré à un point mensuel est déjà dans ses flux
         const transferFlows = transfers
           .filter((tr) => tr.status === "valide" && !tr.consumedMonthly)
           .flatMap(transferToFlows);
-          
-        const consumedWeeklyIds = new Set(weekly.flatMap(s => s.flows).map((f) => f.id));
-        
+
         return [
           ...monthlyFlows,
-          ...weeklyFlows.filter((f) => f.date > seedEnd),
-          ...transferFlows.filter((f) => !consumedWeeklyIds.has(f.id) && f.date > seedEnd),
+          ...transferFlows.filter((f) => f.date > seedEnd),
         ];
-      }, [monthlyEff, weekly, transfers, seedEnd]);
+      }, [monthlyEff, transfers, seedEnd]);
 
       const monthlyMetrics = useMemo(() => buildMonthlyMetrics(monthlyEff, allFlows), [monthlyEff, allFlows]);
       const yearlyMetrics = useMemo(() => buildYearlyMetrics(monthlyMetrics), [monthlyMetrics]);
@@ -2527,7 +2153,6 @@
       const sectorAlloc = useMemo(() => aggregateSectors(positions), [positions]);
 
       const lastMonthly = monthlyEff[monthlyEff.length - 1];
-      const lastWeek = weekly[weekly.length - 1];
       const lastMetric = monthlyMetrics[monthlyMetrics.length - 1];
       const cumSavings = monthlyMetrics.reduce((s, m) => s + m.epargne, 0);
       const cumGain = monthlyMetrics.reduce((s, m) => s + m.gain, 0);
@@ -2571,7 +2196,7 @@
                   <div>
                     <h1 className="text-lg" style={{ color: t.text }}>Poste de pilotage patrimoine</h1>
                     <p className="text-xs" style={{ color: t.textMuted }}>
-                      Dernier relevé mensuel au {fmtDate(lastMonthly.date)} · Bourse au {fmtDate(lastWeek.date)}
+                      Dernier relevé au {fmtDate(lastMonthly.date)}
                       {" · "}
                       {saveStatus === "saving" && "Enregistrement…"}
                       {saveStatus === "saved" && lastSaved && `Sauvegardé à ${lastSaved.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`}
@@ -2619,16 +2244,9 @@
                     <button
                       onClick={() => { setMonthlyModalKey((k) => k + 1); setMonthlyModalOpen(true); }}
                       className="flex items-center gap-1 px-3 py-2 rounded text-sm"
-                      style={{ border: `1px solid ${t.border}`, color: t.text }}
-                    >
-                      <Plus size={14} /> Point mensuel
-                    </button>
-                    <button
-                      onClick={() => { setEditingWeekly(null); setWeeklyModalKey((k) => k + 1); setWeeklyModalOpen(true); }}
-                      className="flex items-center gap-1 px-3 py-2 rounded text-sm"
                       style={{ background: t.accent, color: t.bg }}
                     >
-                      <Plus size={14} /> Point hebdo
+                      <Plus size={14} /> Point mensuel
                     </button>
                   </div>
                 </div>
@@ -2718,7 +2336,7 @@
                   </div>
 
                   <Panel title="Évolution des comptes bourse — CTO Degiro, IBKR, PEA Phil, PEA Ghiz">
-                    <AccountsEvolutionChart series={weekly} />
+                    <AccountsEvolutionChart series={monthlyEff} />
                   </Panel>
                 </div>
               )}
@@ -2750,27 +2368,14 @@
 
               {tab === "historique" && (
                 <div className="space-y-6">
-                  <Panel title="Points mensuels — correction manuelle" collapsible defaultCollapsed>
+                  <Panel title="Points mensuels — correction manuelle">
                     <HistoryTab monthly={monthly} setMonthly={setMonthly} />
-                  </Panel>
-                  <Panel title="Points hebdo — correction manuelle">
-                    <WeeklyHistoryTab weekly={weekly} setWeekly={setWeekly} monthly={monthly} onEdit={handleEditWeekly} setTransfers={setTransfers} />
                   </Panel>
                 </div>
               )}
             </div>
           </div>
 
-          <WeeklySnapshotModal
-            key={weeklyModalKey}
-            open={weeklyModalOpen}
-            onClose={() => { setWeeklyModalOpen(false); setEditingWeekly(null); }}
-            onSave={handleSaveWeekly}
-            lastByAccount={lastWeek?.byAccount}
-            pendingTransfers={pendingValidatedTransfers}
-            onImportPositions={handleImportPositions}
-            editing={editingWeekly}
-          />
           <MonthlySnapshotModal
             key={monthlyModalKey}
             open={monthlyModalOpen}
