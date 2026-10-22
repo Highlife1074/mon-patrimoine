@@ -20,7 +20,7 @@
     }
   </script>
 </head>
-<body>
+<body style="margin:0;background:#0e0f11;font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;-webkit-font-smoothing:antialiased">
   <div id="root"></div>
 
   <script type="text/babel" data-type="module">
@@ -463,11 +463,11 @@
       { id: "m31", date: "2026-02-04T00:00:00.000Z", periode: "2026-01", byAccount: { cto: 288183, ibkr: 0, pea_phil: 183891, pea_ghiz: 39264, nalo_phil: 50252, la_premiere_brique: 64232, homunity: 29983, pee: 40796, lcl: 17939, revolut: 4802, gold: 14000, nalo_ghiz: 0, scpi: 0, binance: 16500, finary: 17565 }, flows: { cto: 5000, nalo_phil: 500 }, totalWealth: 767407, source: "csv" },
       { id: "m32", date: "2026-02-28T00:00:00.000Z", periode: "2026-02", byAccount: { cto: 282146, ibkr: 0, pea_phil: 195059, pea_ghiz: 46190, nalo_phil: 50852, la_premiere_brique: 64232, homunity: 29983, pee: 48939, lcl: 8942, revolut: 11000, gold: 14000, nalo_ghiz: 0, scpi: 0, binance: 14000, finary: 0 }, flows: { cto: 5000, pea_ghiz: 7000, finary: -17565 }, totalWealth: 765343, source: "csv" },
       { id: "m33", date: "2026-03-29T00:00:00.000Z", periode: "2026-03", byAccount: { cto: 269230, ibkr: 0, pea_phil: 190904, pea_ghiz: 49795, nalo_phil: 48701, la_premiere_brique: 64232, homunity: 29983, pee: 44954, lcl: 13597, revolut: 12138, gold: 12000, nalo_ghiz: 0, scpi: 0, binance: 13100, finary: 0 }, flows: { pea_ghiz: 7000, nalo_phil: 500, la_premiere_brique: -3000 }, totalWealth: 748634, source: "csv" },
-      { id: "m34", date: "2026-04-08T00:00:00.000Z", periode: "2026-03", byAccount: { cto: 288000, ibkr: 0, pea_phil: 204000, pea_ghiz: 54500, nalo_phil: 48701, la_premiere_brique: 61479, homunity: 29983, pee: 44954, lcl: 21809, revolut: 5608, gold: 12000, nalo_ghiz: 0, scpi: 0, binance: 13100, finary: 0 }, flows: { cto: 10000, pea_ghiz: 2000 }, totalWealth: 784134, source: "csv" },
-      { id: "m35", date: "2026-04-18T00:00:00.000Z", periode: "2026-04", byAccount: { cto: 318185, ibkr: 0, pea_phil: 212586, pea_ghiz: 65828, nalo_phil: 51695, la_premiere_brique: 61479, homunity: 29983, pee: 54185, lcl: 9650, revolut: 5948, gold: 12000, nalo_ghiz: 0, scpi: 0, binance: 13800, finary: 0 }, flows: { cto: 10000, pea_ghiz: 5000, pee: 5000 }, totalWealth: 835339, source: "csv" },
-      { id: "m36", date: "2026-05-01T00:00:00.000Z", periode: "2026-04", byAccount: { cto: 324005, ibkr: 0, pea_phil: 217472, pea_ghiz: 65077, nalo_phil: 53572, la_premiere_brique: 61479, homunity: 29983, pee: 53748, lcl: 13708, revolut: 5948, gold: 12000, nalo_ghiz: 0, scpi: 0, binance: 14167, finary: 0 }, flows: { nalo_phil: 500 }, totalWealth: 851159, source: "csv" },
+      { id: "m34", date: "2026-04-08T00:00:00.000Z", periode: "2026-03", byAccount: { cto: 288000, ibkr: 0, pea_phil: 204000, pea_ghiz: 54500, nalo_phil: 48701, la_premiere_brique: 61479, homunity: 29983, pee: 44954, lcl: 21809, revolut: 5608, gold: 12000, nalo_ghiz: 0, scpi: 0, binance: 13100, finary: 0 }, flows: { cto: 10000, pea_ghiz: 2000 }, totalWealth: 784134, warning: "SYNTHESE indique aussi LPB −3 000 € ce jour-là (déjà saisi le 29/03) : non compté ici, doublon à vérifier", source: "csv" },
+      { id: "m35", date: "2026-04-18T00:00:00.000Z", periode: "2026-04", byAccount: { cto: 318185, ibkr: 0, pea_phil: 212586, pea_ghiz: 65828, nalo_phil: 51695, la_premiere_brique: 61479, homunity: 29983, pee: 54185, lcl: 9650, revolut: 5948, gold: 12000, nalo_ghiz: 0, scpi: 0, binance: 13800, finary: 0 }, flows: { cto: 10000, pea_ghiz: 5000, pee: 5000 }, totalWealth: 835339, warning: "La colonne du 26/04/26 de SYNTHESE (PEA Ghiz +5 000 €, PEE +5 000 €) n'est pas reprise : copie du 18/04, doublon à vérifier", source: "csv" },
+      { id: "m36", date: "2026-05-01T00:00:00.000Z", periode: "2026-04", byAccount: { cto: 324005, ibkr: 0, pea_phil: 217472, pea_ghiz: 65077, nalo_phil: 53572, la_premiere_brique: 61479, homunity: 29983, pee: 53748, lcl: 13708, revolut: 5948, gold: 12000, nalo_ghiz: 0, scpi: 0, binance: 14167, finary: 0 }, flows: { nalo_phil: 500 }, totalWealth: 851159, warning: "SYNTHESE indique aussi Degiro +20 000 €, PEA Ghiz +7 000 € et PEE +5 000 € : non comptés (l'investi ne bouge pas), doublons à vérifier", source: "csv" },
       { id: "m37", date: "2026-05-20T00:00:00.000Z", periode: "2026-05", byAccount: { cto: 341616, ibkr: 20810, pea_phil: 225259, pea_ghiz: 64890, nalo_phil: 53572, la_premiere_brique: 59914, homunity: 29983, pee: 53748, lcl: 7253, revolut: 3775, gold: 12000, nalo_ghiz: 0, scpi: 0, binance: 14240, finary: 0 }, flows: { ibkr: 22000, la_premiere_brique: -2300, pee: 5000 }, totalWealth: 887060, source: "csv" },
-      { id: "m38", date: "2026-05-28T00:00:00.000Z", periode: "2026-05", byAccount: { cto: 365562, ibkr: 23310, pea_phil: 232538, pea_ghiz: 65608, nalo_phil: 57027, la_premiere_brique: 59914, homunity: 29983, pee: 56000, lcl: 9329, revolut: 2300, gold: 12000, nalo_ghiz: 0, scpi: 0, binance: 14240, finary: 0 }, flows: { pea_ghiz: 2000, nalo_phil: 500 }, totalWealth: 927811, source: "csv" },
+      { id: "m38", date: "2026-05-28T00:00:00.000Z", periode: "2026-05", byAccount: { cto: 365562, ibkr: 23310, pea_phil: 232538, pea_ghiz: 65608, nalo_phil: 57027, la_premiere_brique: 59914, homunity: 29983, pee: 56000, lcl: 9329, revolut: 2300, gold: 12000, nalo_ghiz: 0, scpi: 0, binance: 14240, finary: 0 }, flows: { pea_ghiz: 2000, nalo_phil: 500 }, totalWealth: 927811, warning: "SYNTHESE indique aussi IBKR +22 000 € et LPB −2 300 € (déjà saisis le 20/05) : non comptés, doublons à vérifier", source: "csv" },
       { id: "m38b", date: "2026-06-30T00:00:00.000Z", periode: "2026-06", byAccount: { cto: 316726, ibkr: 26630, pea_phil: 236131, pea_ghiz: 73846, nalo_phil: 57494, la_premiere_brique: 59914, homunity: 29983, pee: 52000, lcl: 13620, revolut: 27500, gold: 12000, nalo_ghiz: 0, scpi: 0, binance: 10902, finary: 0 }, flows: { ibkr: 2000, pea_ghiz: 6000, nalo_phil: 500 }, totalWealth: 916746, source: "csv" },
       { id: "m39", date: "2026-07-25T00:00:00.000Z", periode: "2026-07", byAccount: { cto: 292446, ibkr: 20850, pea_phil: 225670, pea_ghiz: 81396, nalo_phil: 57208, la_premiere_brique: 60398, homunity: 29983, pee: 52000, lcl: 6306, revolut: 9871, gold: 9000, nalo_ghiz: 0, scpi: 0, binance: 10960, finary: 0 }, flows: { cto: 5000, ibkr: 1000, pea_ghiz: 17000, nalo_phil: 500 }, totalWealth: 856088, source: "csv" },
       { id: "m40", date: "2026-09-13T00:00:00.000Z", periode: "2026-09", byAccount: { cto: 103521, ibkr: 144800, pea_phil: 227074, pea_ghiz: 89273, nalo_phil: 58586, la_premiere_brique: 60398, homunity: 29983, pee: 52000, lcl: 81971, revolut: 5600, gold: 9000, nalo_ghiz: 0, scpi: 0, binance: 0, finary: 0 }, flows: { cto: -195000, ibkr: 125000, pea_ghiz: 6000, nalo_phil: 1000, binance: -10960 }, totalWealth: 862206, source: "csv" },
@@ -510,21 +510,34 @@
 
     const THEMES = {
       dark: {
-        bg: "#14171C", panel: "#1B1F27", panelAlt: "#20242E", border: "#2C313D",
-        text: "#EDEAE3", textMuted: "#B6BECE", accent: "#E0B93A",
-        gain: "#3DD68C", loss: "#E5605A", capital: "#4EA8DE", cash: "#F2B84B",
-        swing: "#9B8CE8", spec: "#E5605A", core: "#4EA8DE",
+        bg: "#0e0f11", panel: "#17181b", panelAlt: "#1f2024", border: "#2a2b30",
+        text: "#f0efec", textMuted: "#a3a29b", accent: "#3987e5", onAccent: "#ffffff",
+        gain: "#3cc15a", loss: "#e66767", warning: "#fab219",
+        // Séries (palette catégorielle validée daltonisme, ordre fixe)
+        s1: "#3987e5", s2: "#d95926", s3: "#199e70", s4: "#c98500", s5: "#d55181", s6: "#008300", s7: "#9085e9", s8: "#e66767",
+        shadow: "0 1px 2px rgba(0,0,0,0.4), 0 8px 24px rgba(0,0,0,0.25)",
       },
       light: {
-        bg: "#F5F4F0", panel: "#FFFFFF", panelAlt: "#F0EEE8", border: "#E2E0D9",
-        text: "#1B1E24", textMuted: "#4B5262", accent: "#B8901F",
-        gain: "#1FAF6B", loss: "#D1453D", capital: "#2E7FD1", cash: "#D99A2B",
-        swing: "#7A63D6", spec: "#D1453D", core: "#2E7FD1",
+        bg: "#f4f4f1", panel: "#ffffff", panelAlt: "#f4f4f1", border: "#e4e3dc",
+        text: "#0b0b0b", textMuted: "#62615c", accent: "#2a78d6", onAccent: "#ffffff",
+        gain: "#006300", loss: "#d03b3b", warning: "#b77900",
+        s1: "#2a78d6", s2: "#eb6834", s3: "#1baf7a", s4: "#eda100", s5: "#e87ba4", s6: "#008300", s7: "#6250d6", s8: "#e34948",
+        shadow: "0 1px 2px rgba(11,11,11,0.04), 0 8px 24px rgba(11,11,11,0.06)",
       },
     };
+    // Rôles : épargne = série 1, placement = série 3 (couleur liée à l'entité, jamais au rang)
+    for (const th of Object.values(THEMES)) {
+      Object.assign(th, { capital: th.s1, placement: th.s3, cash: th.s2, core: th.s1, swing: th.s2, spec: th.s3 });
+    }
     const ThemeCtx = createContext(THEMES.dark);
-    const SECTOR_PALETTE = (t) => [t.capital, t.gain, t.cash, t.swing, t.loss, "#2BC4C4", "#E87BB5", "#8FBF3F", t.textMuted];
+    const SECTOR_PALETTE = (t) => [t.s1, t.s2, t.s3, t.s4, t.s5, t.s6, t.s7, t.s8, t.textMuted];
     const useTheme = () => useContext(ThemeCtx);
+    const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+    const NUM = { fontVariantNumeric: "tabular-nums" };
+    const tooltipStyle = (t) => ({
+      background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, fontSize: 12,
+      boxShadow: t.shadow, padding: "8px 12px", color: t.text,
+    });
 
     const CATEGORY_COLOR = (t) => ({
       "Fond de portefeuille": t.core, "Swing": t.swing, "Spéculatif": t.spec, "Non classé": t.textMuted,
@@ -548,7 +561,7 @@
 
       return (
         <div className="min-h-screen w-full flex items-center justify-center" style={{ background: t.bg }}>
-          <div className="w-full max-w-sm p-8 rounded-lg" style={{ background: t.panel, border: `1px solid ${t.border}` }}>
+          <div className="w-full max-w-sm p-8 rounded-2xl" style={{ background: t.panel, border: `1px solid ${t.border}`, boxShadow: t.shadow }}>
             <div className="flex items-center gap-2 mb-6 justify-center">
               <Wallet size={24} color={t.accent} />
               <h1 className="text-xl font-semibold" style={{ color: t.text }}>Poste de Pilotage</h1>
@@ -560,7 +573,7 @@
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full rounded px-3 py-2 text-sm"
+                  className="w-full rounded-lg px-3 py-2.5 text-sm"
                   style={{ background: t.panelAlt, color: t.text, border: `1px solid ${t.border}` }}
                   required
                 />
@@ -571,7 +584,7 @@
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full rounded px-3 py-2 text-sm"
+                  className="w-full rounded-lg px-3 py-2.5 text-sm"
                   style={{ background: t.panelAlt, color: t.text, border: `1px solid ${t.border}` }}
                   required
                 />
@@ -579,8 +592,8 @@
               {error && <p className="text-xs text-center" style={{ color: t.loss }}>{error}</p>}
               <button
                 type="submit"
-                className="w-full rounded py-2 mt-4 text-sm font-semibold transition-opacity hover:opacity-90"
-                style={{ background: t.accent, color: t.bg }}
+                className="w-full rounded-lg py-2.5 mt-4 text-sm font-semibold transition-opacity hover:opacity-90"
+                style={{ background: t.accent, color: t.onAccent }}
               >
                 Connexion sécurisée
               </button>
@@ -590,43 +603,40 @@
       );
     }
 
-   function KPICard({ icon: Icon, label, value, sub, highlight, tone }) {
-  const t = useTheme();
-  const toneColor = tone === "up" ? t.gain : tone === "down" ? t.loss : t.text;
-  return (
-    <div
-      className="flex-1 min-w-[200px] rounded-lg p-5"
-      style={{
-        background: t.panel,
-        border: `1px solid ${t.border}`,
-        borderLeft: highlight ? `3px solid ${t.accent}` : `1px solid ${t.border}`,
-      }}
-    >
-      <div className="flex items-center gap-2 mb-3">
-        <Icon size={16} color={t.textMuted} />
-        <span className="text-sm" style={{ color: t.textMuted }}>{label}</span>
-      </div>
-      <div className={highlight ? "text-3xl" : "text-2xl"} style={{ color: toneColor, fontFamily: "ui-monospace, monospace" }}>
-        {value}
-      </div>
-      {sub && <div className="text-xs mt-2" style={{ color: t.textMuted }}>{sub}</div>}
-    </div>
-  );
-}
+    function KPICard({ icon: Icon, label, value, sub, tone }) {
+      const t = useTheme();
+      const toneColor = tone === "up" ? t.gain : tone === "down" ? t.loss : t.textMuted;
+      const arrow = tone === "up" ? "▲ " : tone === "down" ? "▼ " : "";
+      return (
+        <div className="rounded-2xl p-5 flex flex-col gap-3" style={{ background: t.panel, border: `1px solid ${t.border}`, boxShadow: t.shadow }}>
+          <div className="flex items-center gap-2">
+            <span className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ background: `${t.accent}1f` }}>
+              <Icon size={16} color={t.accent} />
+            </span>
+            <span className="text-xs font-medium" style={{ color: t.textMuted }}>{label}</span>
+          </div>
+          <div className="text-2xl font-semibold tracking-tight" style={{ color: t.text }}>{value}</div>
+          {sub && <div className="text-xs" style={{ color: toneColor }}>{arrow}{sub}</div>}
+        </div>
+      );
+    }
 
-    function Panel({ title, action, children, collapsible, defaultCollapsed }) {
+    function Panel({ title, subtitle, action, children, collapsible, defaultCollapsed }) {
       const t = useTheme();
       const [collapsed, setCollapsed] = useState(!!defaultCollapsed);
       return (
-        <div className="rounded-lg p-5" style={{ background: t.panel, border: `1px solid ${t.border}` }}>
+        <div className="rounded-2xl p-5 md:p-6" style={{ background: t.panel, border: `1px solid ${t.border}`, boxShadow: t.shadow }}>
           <div
-            className={`flex items-center justify-between ${collapsed ? "" : "mb-4"} ${collapsible ? "cursor-pointer select-none" : ""}`}
+            className={`flex items-start justify-between gap-4 ${collapsed ? "" : "mb-5"} ${collapsible ? "cursor-pointer select-none" : ""}`}
             onClick={collapsible ? () => setCollapsed((c) => !c) : undefined}
           >
-            <h3 className="text-sm tracking-wide flex items-center gap-1" style={{ color: t.textMuted }}>
-              {collapsible && (collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />)}
-              {title}
-            </h3>
+            <div>
+              <h3 className="text-sm font-semibold flex items-center gap-1" style={{ color: t.text }}>
+                {collapsible && (collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />)}
+                {title}
+              </h3>
+              {subtitle && <p className="text-xs mt-1" style={{ color: t.textMuted }}>{subtitle}</p>}
+            </div>
             {action}
           </div>
           {!collapsed && children}
@@ -634,140 +644,191 @@
       );
     }
 
+    const periodeDate = (p) => new Date(`${p}-15T00:00:00`);
+    const monthLabel = (p) => periodeDate(p).toLocaleDateString("fr-FR", { month: "short", year: "2-digit" });
+    const kLabel = (v) => `${v >= 0 ? "+" : "−"}${Math.abs(Math.round(v / 1000))}k`;
+    const signed = (v) => `${v >= 0 ? "+" : ""}${fmtEUR(v)}`;
+
+    function ChartLegend({ items }) {
+      const t = useTheme();
+      return (
+        <div className="flex flex-wrap gap-x-4 gap-y-1 mb-3">
+          {items.map((it) => (
+            <span key={it.label} className="flex items-center gap-1.5 text-xs" style={{ color: t.textMuted }}>
+              <span className="w-2.5 h-2.5 rounded-sm" style={{ background: it.color }} />
+              {it.label}
+            </span>
+          ))}
+        </div>
+      );
+    }
+
+    function WealthChart({ data }) {
+      const t = useTheme();
+      return (
+        <ResponsiveContainer width="100%" height={220}>
+          <AreaChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <defs>
+              <linearGradient id="wealthFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={t.accent} stopOpacity={0.28} />
+                <stop offset="100%" stopColor={t.accent} stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid stroke={t.border} vertical={false} />
+            <XAxis dataKey="periode" tickFormatter={monthLabel} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} minTickGap={28} />
+            <YAxis tickFormatter={(v) => `${Math.round(v / 1000)}k`} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} width={44} domain={["dataMin - 20000", "dataMax + 20000"]} />
+            <Tooltip
+              cursor={{ stroke: t.textMuted, strokeDasharray: "3 3" }}
+              contentStyle={tooltipStyle(t)}
+              labelFormatter={(p) => periodeDate(p).toLocaleDateString("fr-FR", { month: "long", year: "numeric" })}
+              formatter={(v) => [fmtEUR(v), "Patrimoine total"]}
+            />
+            <Area type="monotone" dataKey="wealth" stroke={t.accent} strokeWidth={2} fill="url(#wealthFill)"
+              activeDot={{ r: 5, stroke: t.panel, strokeWidth: 2, fill: t.accent }} />
+          </AreaChart>
+        </ResponsiveContainer>
+      );
+    }
+
     function MonthlyEvolutionChart({ data }) {
       const t = useTheme();
-      const periodeDate = (p) => new Date(`${p}-15T00:00:00`);
-      const monthLabel = (p) => periodeDate(p).toLocaleDateString("fr-FR", { month: "short", year: "2-digit" });
-      const kLabel = (v) => `${v >= 0 ? "+" : ""}${Math.round(v / 1000)}k`;
-      const signed = (v) => `${v >= 0 ? "+" : ""}${fmtEUR(v)}`;
-      const chartData = data.map((m) => ({
+      const chartData = data.slice(1).map((m) => ({
         ...m,
         labelY: m.monthChange >= 0
           ? Math.max(m.epargne, 0) + Math.max(m.gain, 0)
           : Math.min(m.epargne, 0) + Math.min(m.gain, 0),
       }));
       return (
-        <ResponsiveContainer width="100%" height={360}>
-          <ComposedChart data={chartData} stackOffset="sign" margin={{ top: 20, right: 10, left: 0, bottom: 10 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke={t.border} vertical={false} />
-            <XAxis dataKey="periode" tickFormatter={monthLabel} tick={{ fill: t.textMuted, fontSize: 10 }}
-              axisLine={{ stroke: t.border }} tickLine={false} minTickGap={18} />
-            <YAxis yAxisId="left" tickFormatter={(v) => `${Math.round(v / 1000)}k`} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} width={45} />
-            <YAxis yAxisId="right" orientation="right" tickFormatter={(v) => `${Math.round(v / 1000)}k`} tick={{ fill: t.accent, fontSize: 11 }} axisLine={false} tickLine={false} width={45} />
-            <ReferenceLine yAxisId="left" y={0} stroke={t.textMuted} strokeWidth={1} />
-            <Tooltip
-              contentStyle={{ background: t.panelAlt, border: `1px solid ${t.border}`, borderRadius: 6, fontSize: 12 }}
-              content={({ active, payload }) => {
-                if (!active || !payload?.length) return null;
-                const p = payload[0].payload;
-                const row = (label, v, color) => (
-                  <div className="flex justify-between gap-4">
-                    <span style={{ color: t.textMuted }}>{label}</span>
-                    <span style={{ color: color || (v >= 0 ? t.gain : t.loss), fontFamily: "ui-monospace, monospace" }}>{signed(v)}</span>
-                  </div>
-                );
-                return (
-                  <div className="rounded p-2 text-xs space-y-1" style={{ background: t.panelAlt, border: `1px solid ${t.border}`, minWidth: 230 }}>
-                    <div style={{ color: t.text }}>{periodeDate(p.periode).toLocaleDateString("fr-FR", { month: "long", year: "numeric" })} · relevé du {new Date(p.date).toLocaleDateString("fr-FR")}</div>
-                    {row(p.epargne >= 0 ? "Gain d'épargne" : "Perte d'épargne", p.epargne)}
-                    <div className="pl-3 text-[11px]" style={{ color: t.textMuted }}>
-                      dont versé sur placements {signed(p.savings)} · trésorerie {signed(p.cash)}
+        <div>
+          <ChartLegend items={[{ label: "Épargne (versements + trésorerie)", color: t.capital }, { label: "Placement", color: t.placement }]} />
+          <ResponsiveContainer width="100%" height={340}>
+            <ComposedChart data={chartData} stackOffset="sign" margin={{ top: 20, right: 8, left: 0, bottom: 0 }} barCategoryGap="25%">
+              <CartesianGrid stroke={t.border} vertical={false} />
+              <XAxis dataKey="periode" tickFormatter={monthLabel} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} minTickGap={18} />
+              <YAxis tickFormatter={(v) => `${Math.round(v / 1000)}k`} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} width={44} />
+              <ReferenceLine y={0} stroke={t.textMuted} strokeOpacity={0.6} />
+              <Tooltip
+                cursor={{ fill: t.panelAlt }}
+                content={({ active, payload }) => {
+                  if (!active || !payload?.length) return null;
+                  const p = payload[0].payload;
+                  const row = (label, v, color) => (
+                    <div className="flex justify-between items-center gap-4">
+                      <span className="flex items-center gap-1.5" style={{ color: t.textMuted }}>
+                        {color && <span className="w-2 h-2 rounded-sm" style={{ background: color }} />}{label}
+                      </span>
+                      <span style={{ color: t.text, ...NUM }}>{signed(v)}</span>
                     </div>
-                    {row(p.gain >= 0 ? "Gain de placement" : "Perte de placement", p.gain)}
-                    {row(p.monthChange >= 0 ? "Gain du mois" : "Perte du mois", p.monthChange, t.accent)}
-                    <div className="flex justify-between gap-4 pt-1" style={{ borderTop: `1px solid ${t.border}` }}>
-                      <span style={{ color: t.textMuted }}>Total patrimoine</span>
-                      <span style={{ color: t.accent, fontFamily: "ui-monospace, monospace" }}>{fmtEUR(p.wealth)}</span>
+                  );
+                  return (
+                    <div className="space-y-1 text-xs" style={{ ...tooltipStyle(t), minWidth: 240 }}>
+                      <div className="font-semibold" style={{ color: t.text }}>
+                        {periodeDate(p.periode).toLocaleDateString("fr-FR", { month: "long", year: "numeric" })}
+                      </div>
+                      <div style={{ color: t.textMuted, fontSize: 11 }}>relevé du {new Date(p.date).toLocaleDateString("fr-FR")}</div>
+                      {row("Épargne", p.epargne, t.capital)}
+                      <div className="pl-3.5 text-[11px]" style={{ color: t.textMuted }}>
+                        dont versé {signed(p.savings)} · trésorerie {signed(p.cash)}
+                      </div>
+                      {row("Placement", p.gain, t.placement)}
+                      <div className="pt-1 mt-1 space-y-1" style={{ borderTop: `1px solid ${t.border}` }}>
+                        {row("Variation du mois", p.monthChange)}
+                        <div className="flex justify-between gap-4">
+                          <span style={{ color: t.textMuted }}>Patrimoine</span>
+                          <span className="font-semibold" style={{ color: t.text, ...NUM }}>{fmtEUR(p.wealth)}</span>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                );
-              }}
-            />
-            <Legend
-              formatter={(v) => (v === "epargne" ? "Épargne (versements + trésorerie)" : v === "gain" ? "Placement" : "Total patrimoine")}
-              wrapperStyle={{ fontSize: 12 }}
-            />
-            <Bar yAxisId="left" dataKey="epargne" stackId="month" fill={t.capital} />
-            <Bar yAxisId="left" dataKey="gain" stackId="month" fill={t.gain} />
-            <Line yAxisId="left" dataKey="labelY" stroke="none" legendType="none" isAnimationActive={false} activeDot={false}
-              dot={(props) => {
-                const { cx, cy, payload, index } = props;
-                if (cx == null || cy == null) return <g key={index} />;
-                const up = payload.monthChange >= 0;
-                return (
-                  <text key={index} x={cx} y={up ? cy - 5 : cy + 12} textAnchor="middle" fontSize={10} fontWeight={600} fill={t.accent}>
-                    {kLabel(payload.monthChange)}
-                  </text>
-                );
-              }}
-            />
-            <Line yAxisId="right" type="monotone" dataKey="wealth" stroke={t.accent} strokeWidth={2} dot={false} />
-          </ComposedChart>
-        </ResponsiveContainer>
+                  );
+                }}
+              />
+              <Bar dataKey="epargne" stackId="month" fill={t.capital} stroke={t.panel} strokeWidth={1} radius={[3, 3, 3, 3]} maxBarSize={22} />
+              <Bar dataKey="gain" stackId="month" fill={t.placement} stroke={t.panel} strokeWidth={1} radius={[3, 3, 3, 3]} maxBarSize={22} />
+              <Line dataKey="labelY" stroke="none" legendType="none" isAnimationActive={false} activeDot={false}
+                dot={(props) => {
+                  const { cx, cy, payload, index } = props;
+                  if (cx == null || cy == null) return <g key={index} />;
+                  const up = payload.monthChange >= 0;
+                  return (
+                    <text key={index} x={cx} y={up ? cy - 6 : cy + 13} textAnchor="middle" fontSize={10} fontWeight={600} fill={t.textMuted}>
+                      {kLabel(payload.monthChange)}
+                    </text>
+                  );
+                }}
+              />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
       );
     }
 
     function YearlyBarChart({ data }) {
       const t = useTheme();
-      const signed = (v) => `${v >= 0 ? "+" : ""}${fmtEUR(v)}`;
       return (
-        <ResponsiveContainer width="100%" height={300}>
-          <ComposedChart data={data.map((y) => ({ ...y, labelY: y.wealthChange >= 0 ? Math.max(y.epargne, 0) + Math.max(y.gain, 0) : Math.min(y.epargne, 0) + Math.min(y.gain, 0) }))}
-            stackOffset="sign" margin={{ top: 24, right: 10, left: 0, bottom: 10 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke={t.border} vertical={false} />
-            <XAxis dataKey="year" tick={{ fill: t.textMuted, fontSize: 12 }} axisLine={{ stroke: t.border }} tickLine={false} />
-            <YAxis tickFormatter={(v) => `${Math.round(v / 1000)}k`} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} width={45} />
-            <ReferenceLine y={0} stroke={t.textMuted} strokeWidth={1} />
-            <Tooltip
-              contentStyle={{ background: t.panelAlt, border: `1px solid ${t.border}`, borderRadius: 6, fontSize: 12 }}
-              formatter={(v, name) => [signed(v), name === "epargne" ? (v >= 0 ? "Gain d'épargne" : "Perte d'épargne") : (v >= 0 ? "Gain de placement" : "Perte de placement")]}
-              labelFormatter={(year, payload) => {
-                const total = payload?.[0]?.payload?.wealthChange;
-                return `${year} — ${total >= 0 ? "gain" : "perte"} de l'année ${total !== undefined ? signed(total) : ""}`;
-              }}
-            />
-            <Legend formatter={(v) => (v === "epargne" ? "Épargne (versements + trésorerie)" : "Placement")} wrapperStyle={{ fontSize: 12 }} />
-            <Bar dataKey="epargne" stackId="year" fill={t.capital} />
-            <Bar dataKey="gain" stackId="year" fill={t.gain} />
-            <Line dataKey="labelY" stroke="none" legendType="none" isAnimationActive={false} activeDot={false}
-              dot={(props) => {
-                const { cx, cy, payload, index } = props;
-                if (cx == null || cy == null) return <g key={index} />;
-                const up = payload.wealthChange >= 0;
-                return (
-                  <text key={index} x={cx} y={up ? cy - 6 : cy + 14} textAnchor="middle" fontSize={11} fontWeight={600} fill={t.accent}>
-                    {signed(payload.wealthChange)}
-                  </text>
-                );
-              }}
-            />
-          </ComposedChart>
-        </ResponsiveContainer>
+        <div>
+          <ChartLegend items={[{ label: "Épargne (versements + trésorerie)", color: t.capital }, { label: "Placement", color: t.placement }]} />
+          <ResponsiveContainer width="100%" height={300}>
+            <ComposedChart data={data.map((y) => ({ ...y, labelY: y.wealthChange >= 0 ? Math.max(y.epargne, 0) + Math.max(y.gain, 0) : Math.min(y.epargne, 0) + Math.min(y.gain, 0) }))}
+              stackOffset="sign" margin={{ top: 26, right: 8, left: 0, bottom: 0 }} barCategoryGap="35%">
+              <CartesianGrid stroke={t.border} vertical={false} />
+              <XAxis dataKey="year" tick={{ fill: t.textMuted, fontSize: 12 }} axisLine={false} tickLine={false} />
+              <YAxis tickFormatter={(v) => `${Math.round(v / 1000)}k`} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} width={44} />
+              <ReferenceLine y={0} stroke={t.textMuted} strokeOpacity={0.6} />
+              <Tooltip
+                cursor={{ fill: t.panelAlt }}
+                contentStyle={tooltipStyle(t)}
+                formatter={(v, name) => [signed(v), name === "epargne" ? "Épargne" : "Placement"]}
+                labelFormatter={(year, payload) => {
+                  const total = payload?.[0]?.payload?.wealthChange;
+                  return `${year} — variation ${total !== undefined ? signed(total) : ""}`;
+                }}
+              />
+              <Bar dataKey="epargne" stackId="year" fill={t.capital} stroke={t.panel} strokeWidth={2} radius={[4, 4, 4, 4]} maxBarSize={64} />
+              <Bar dataKey="gain" stackId="year" fill={t.placement} stroke={t.panel} strokeWidth={2} radius={[4, 4, 4, 4]} maxBarSize={64} />
+              <Line dataKey="labelY" stroke="none" legendType="none" isAnimationActive={false} activeDot={false}
+                dot={(props) => {
+                  const { cx, cy, payload, index } = props;
+                  if (cx == null || cy == null) return <g key={index} />;
+                  const up = payload.wealthChange >= 0;
+                  return (
+                    <text key={index} x={cx} y={up ? cy - 8 : cy + 16} textAnchor="middle" fontSize={12} fontWeight={600} fill={t.text}>
+                      {signed(payload.wealthChange)}
+                    </text>
+                  );
+                }}
+              />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
       );
     }
 
     function AccountsEvolutionChart({ series }) {
       const t = useTheme();
-      const colors = { cto: t.capital, ibkr: t.accent, pea_phil: t.gain, pea_ghiz: t.swing };
+      const colors = { cto: t.s1, ibkr: t.s2, pea_phil: t.s3, pea_ghiz: t.s4 };
       const labels = { cto: "CTO Degiro", ibkr: "IBKR", pea_phil: "PEA Phil", pea_ghiz: "PEA Ghiz" };
       const data = series.map((s) => ({ date: s.date, ...s.byAccount }));
       return (
-        <ResponsiveContainer width="100%" height={300}>
-          <LineChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke={t.border} vertical={false} />
-            <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fill: t.textMuted, fontSize: 10 }} axisLine={{ stroke: t.border }} tickLine={false} minTickGap={25} />
-            <YAxis tickFormatter={(v) => `${Math.round(v / 1000)}k`} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} width={45} />
-            <Tooltip
-              contentStyle={{ background: t.panelAlt, border: `1px solid ${t.border}`, borderRadius: 6, fontSize: 12 }}
-              labelFormatter={fmtDate}
-              formatter={(v, name) => [fmtEUR(v), labels[name] || name]}
-            />
-            <Legend formatter={(v) => labels[v] || v} wrapperStyle={{ fontSize: 12 }} />
-            {Object.keys(colors).map((k) => (
-              <Line key={k} type="monotone" dataKey={k} stroke={colors[k]} strokeWidth={2} dot={false} />
-            ))}
-          </LineChart>
-        </ResponsiveContainer>
+        <div>
+          <ChartLegend items={Object.keys(colors).map((k) => ({ label: labels[k], color: colors[k] }))} />
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart data={data} margin={{ top: 5, right: 8, left: 0, bottom: 0 }}>
+              <CartesianGrid stroke={t.border} vertical={false} />
+              <XAxis dataKey="date" tickFormatter={(d) => new Date(d).toLocaleDateString("fr-FR", { month: "short", year: "2-digit" })} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} minTickGap={28} />
+              <YAxis tickFormatter={(v) => `${Math.round(v / 1000)}k`} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} width={44} />
+              <Tooltip
+                cursor={{ stroke: t.textMuted, strokeDasharray: "3 3" }}
+                contentStyle={tooltipStyle(t)}
+                labelFormatter={(d) => new Date(d).toLocaleDateString("fr-FR")}
+                formatter={(v, name) => [fmtEUR(v), labels[name] || name]}
+              />
+              {Object.keys(colors).map((k) => (
+                <Line key={k} type="monotone" dataKey={k} stroke={colors[k]} strokeWidth={2} dot={false}
+                  activeDot={{ r: 4, stroke: t.panel, strokeWidth: 2 }} />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
       );
     }
 
@@ -776,15 +837,42 @@
       return (
         <ResponsiveContainer width="100%" height={200}>
           <PieChart>
-            <Pie data={data} dataKey="value" nameKey="key" innerRadius={50} outerRadius={78} paddingAngle={2} stroke={t.panel} strokeWidth={2}>
+            <Pie data={data} dataKey="value" nameKey="key" innerRadius={62} outerRadius={86} paddingAngle={1.5} cornerRadius={4} stroke={t.panel} strokeWidth={2}>
               {data.map((d, i) => <Cell key={i} fill={colorFor(d.key, i)} />)}
             </Pie>
             <Tooltip
-              contentStyle={{ background: t.panelAlt, border: `1px solid ${t.border}`, borderRadius: 6, fontSize: 12 }}
+              contentStyle={tooltipStyle(t)}
               formatter={(v, n, p) => [`${fmtEUR(v)} (${(p.payload.weight * 100).toFixed(1)} %)`, p.payload.key]}
             />
           </PieChart>
         </ResponsiveContainer>
+      );
+    }
+
+    function WarningsPanel({ items, onOpen }) {
+      const t = useTheme();
+      if (!items.length) return null;
+      return (
+        <div className="rounded-2xl p-4 md:p-5" style={{ background: `${t.warning}14`, border: `1px solid ${t.warning}66` }}>
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <div className="text-sm font-semibold" style={{ color: t.text }}>
+              <span style={{ color: t.warning }}>⚠</span> {items.length} relevé{items.length > 1 ? "s" : ""} à vérifier
+            </div>
+            {onOpen && (
+              <button onClick={onOpen} className="text-xs px-3 py-1.5 rounded-lg" style={{ border: `1px solid ${t.border}`, color: t.text, background: t.panel }}>
+                Voir l'historique
+              </button>
+            )}
+          </div>
+          <ul className="space-y-1">
+            {items.map((m) => (
+              <li key={m.id} className="text-xs flex gap-2" style={{ color: t.textMuted }}>
+                <span className="shrink-0 font-medium" style={{ color: t.text, ...NUM }}>{new Date(m.date).toLocaleDateString("fr-FR")}</span>
+                <span>{m.warning}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
       );
     }
 
@@ -998,7 +1086,7 @@
               <button
                 onClick={() => selected.forEach((id) => onUpdate?.(id, { category: bulkCategory }))}
                 className="text-xs px-3 py-1 rounded"
-                style={{ background: t.accent, color: t.bg }}
+                style={{ background: t.accent, color: t.onAccent }}
               >
                 Appliquer la catégorie
               </button>
@@ -1013,7 +1101,7 @@
               <button
                 onClick={() => { if (bulkSector.trim()) selected.forEach((id) => onUpdate?.(id, { sector: bulkSector.trim() })); }}
                 className="text-xs px-3 py-1 rounded"
-                style={{ background: t.accent, color: t.bg }}
+                style={{ background: t.accent, color: t.onAccent }}
               >
                 Appliquer le secteur
               </button>
@@ -1238,7 +1326,7 @@
             <div className="flex-1 min-w-[160px]">
               <label className="text-xs block mb-1" style={{ color: t.textMuted }}>Libellé</label>
               <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="ex. Versement programmé"
-                className="w-full rounded px-3 py-2 text-sm" style={{ background: t.panel, color: t.text, border: `1px solid ${t.border}` }} />
+                className="w-full rounded-lg px-3 py-2.5 text-sm" style={{ background: t.panel, color: t.text, border: `1px solid ${t.border}` }} />
             </div>
             <div>
               <label className="text-xs block mb-1" style={{ color: t.textMuted }}>Montant (€)</label>
@@ -1259,7 +1347,7 @@
                 className="rounded px-3 py-2 text-sm" style={{ background: t.panel, color: t.text, border: `1px solid ${t.border}` }} />
             </div>
             <button onClick={handleAdd} className="flex items-center gap-1 px-3 py-2 rounded text-sm"
-              style={{ background: t.accent, color: t.bg }}>
+              style={{ background: t.accent, color: t.onAccent }}>
               <Plus size={14} /> Programmer
             </button>
           </div>
@@ -1331,7 +1419,7 @@
               <div className="flex-1 min-w-[160px]">
                 <label className="text-xs block mb-1" style={{ color: t.textMuted }}>Libellé</label>
                 <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="ex. Versement programmé"
-                  className="w-full rounded px-3 py-2 text-sm" style={{ background: t.panel, color: t.text, border: `1px solid ${t.border}` }} />
+                  className="w-full rounded-lg px-3 py-2.5 text-sm" style={{ background: t.panel, color: t.text, border: `1px solid ${t.border}` }} />
               </div>
               <div>
                 <label className="text-xs block mb-1" style={{ color: t.textMuted }}>Montant (€)</label>
@@ -1344,7 +1432,7 @@
                   className="rounded px-3 py-2 text-sm" style={{ background: t.panel, color: t.text, border: `1px solid ${t.border}` }} />
               </div>
               <button onClick={handleAdd} className="flex items-center gap-1 px-3 py-2 rounded text-sm"
-                style={{ background: t.accent, color: t.bg }}>
+                style={{ background: t.accent, color: t.onAccent }}>
                 <Plus size={14} /> Ajouter
               </button>
             </div>
@@ -1542,7 +1630,7 @@
                   </div>
                   <div className="flex items-center justify-between text-xs">
                     <span style={{ color: t.textMuted }}>{csvData.rows.length} lignes · total {fmtEUR(csvComputedTotal)}</span>
-                    <button onClick={applyCsv} className="px-2 py-1 rounded" style={{ background: t.accent, color: t.bg }}>
+                    <button onClick={applyCsv} className="px-2 py-1 rounded" style={{ background: t.accent, color: t.onAccent }}>
                       Appliquer
                     </button>
                   </div>
@@ -1565,7 +1653,7 @@
                 onClick={refreshIbkr}
                 disabled={ibkrLoading}
                 className="flex items-center gap-1 text-xs px-2 py-1 rounded"
-                style={{ background: t.accent, color: t.bg, opacity: ibkrLoading ? 0.6 : 1 }}
+                style={{ background: t.accent, color: t.onAccent, opacity: ibkrLoading ? 0.6 : 1 }}
               >
                 <Link2 size={12} className={ibkrLoading ? "animate-spin" : ""} />
                 {ibkrLoading ? "Connexion…" : "Actualiser depuis IBKR"}
@@ -1700,7 +1788,7 @@
             <button
               onClick={handleSave}
               className="w-full mt-4 rounded py-2 text-sm"
-              style={{ background: t.accent, color: t.bg }}
+              style={{ background: t.accent, color: t.onAccent }}
             >
               Enregistrer le point mensuel
             </button>
@@ -1955,7 +2043,7 @@
     }
 
     const STORAGE_KEY = "patrimoine-state";
-    const SEED_VERSION = 11;
+    const SEED_VERSION = 12;
 
     // =========================================================================
     // APPLICATION PRINCIPALE
@@ -2168,6 +2256,10 @@
       const sectorAlloc = useMemo(() => aggregateSectors(positions), [positions]);
 
       const lastMonthly = monthlyEff[monthlyEff.length - 1];
+      const monthlyWarnings = useMemo(
+        () => monthly.filter((m) => m.warning).sort((a, b) => new Date(a.date) - new Date(b.date)),
+        [monthly]
+      );
       const lastMetric = monthlyMetrics[monthlyMetrics.length - 1];
       const cumSavings = monthlyMetrics.reduce((s, m) => s + m.epargne, 0);
       const cumGain = monthlyMetrics.reduce((s, m) => s + m.gain, 0);
@@ -2214,113 +2306,113 @@
       return (
         <ThemeCtx.Provider value={t}>
           <div className="min-h-screen w-full" style={{ background: t.bg }}>
-            <div className="sticky top-0 z-40" style={{ background: t.bg, borderBottom: `1px solid ${t.border}` }}>
-              <div className="max-w-6xl mx-auto px-6 pt-6">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <h1 className="text-lg" style={{ color: t.text }}>Poste de pilotage patrimoine</h1>
-                    <p className="text-xs" style={{ color: t.textMuted }}>
-                      Dernier relevé au {fmtDate(lastMonthly.date)}
-                      {" · "}
-                      {saveStatus === "saving" && "Enregistrement…"}
-                      {saveStatus === "saved" && lastSaved && `Sauvegardé à ${lastSaved.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`}
-                      {saveStatus === "erreur" && <span style={{ color: t.loss }}>Échec de la sauvegarde</span>}
-                    </p>
-                  </div>
+            <div className="sticky top-0 z-40" style={{ background: `${t.bg}d9`, backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", borderBottom: `1px solid ${t.border}` }}>
+              <div className="max-w-6xl mx-auto px-4 md:px-6 py-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
+                    <span className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: `linear-gradient(135deg, ${t.s1}, ${t.s7})` }}>
+                      <Wallet size={20} color="#ffffff" />
+                    </span>
+                    <div>
+                      <h1 className="text-base font-semibold tracking-tight" style={{ color: t.text }}>Mon patrimoine</h1>
+                      <p className="text-xs" style={{ color: t.textMuted }}>
+                        Dernier relevé le {new Date(lastMonthly.date).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}
+                        {" · "}
+                        {saveStatus === "saving" && "Enregistrement…"}
+                        {saveStatus === "saved" && lastSaved && `Sauvegardé à ${lastSaved.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`}
+                        {saveStatus === "erreur" && <span style={{ color: t.loss }}>Échec de la sauvegarde</span>}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1 p-1 rounded-xl order-last md:order-none w-full md:w-auto" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
+                    {NAV_ITEMS.map((n) => (
+                      <button
+                        key={n.id}
+                        onClick={() => setTab(n.id)}
+                        className="flex-1 md:flex-none px-3 md:px-4 py-1.5 text-sm rounded-lg transition-all"
+                        style={{
+                          color: tab === n.id ? t.text : t.textMuted,
+                          background: tab === n.id ? t.panel : "transparent",
+                          boxShadow: tab === n.id ? t.shadow : "none",
+                          fontWeight: tab === n.id ? 600 : 400,
+                        }}
+                      >
+                        {n.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
                     <ResetButton onConfirm={handleReset} />
-                    <button
-                      onClick={handleExport}
-                      title="Télécharger une sauvegarde JSON"
-                      className="flex items-center gap-1 p-2 rounded text-xs"
-                      style={{ border: `1px solid ${t.border}`, color: t.textMuted }}
-                    >
-                      <Download size={14} />
+                    <button onClick={handleExport} title="Télécharger une sauvegarde JSON" className="p-2 rounded-lg transition-colors" style={{ color: t.textMuted }}>
+                      <Download size={16} />
                     </button>
-                    <label
-                      title="Restaurer une sauvegarde JSON"
-                      className="flex items-center gap-1 p-2 rounded text-xs cursor-pointer"
-                      style={{ border: `1px solid ${t.border}`, color: t.textMuted }}
-                    >
-                      <Upload size={14} />
-                      <input
-                        type="file"
-                        accept="application/json"
-                        className="hidden"
-                        onChange={(e) => e.target.files[0] && handleImportFile(e.target.files[0])}
-                      />
+                    <label title="Restaurer une sauvegarde JSON" className="p-2 rounded-lg cursor-pointer" style={{ color: t.textMuted }}>
+                      <Upload size={16} />
+                      <input type="file" accept="application/json" className="hidden"
+                        onChange={(e) => e.target.files[0] && handleImportFile(e.target.files[0])} />
                     </label>
-                    <button
-                      onClick={() => setThemeName((n) => (n === "dark" ? "light" : "dark"))}
-                      className="p-2 rounded"
-                      style={{ border: `1px solid ${t.border}`, color: t.textMuted }}
-                    >
+                    <button onClick={() => setThemeName((n) => (n === "dark" ? "light" : "dark"))} title="Changer de thème" className="p-2 rounded-lg transition-colors" style={{ color: t.textMuted }}>
                       {themeName === "dark" ? <Sun size={16} /> : <Moon size={16} />}
                     </button>
-                    <button
-                      onClick={handleLogout}
-                      title="Se déconnecter"
-                      className="p-2 rounded"
-                      style={{ border: `1px solid ${t.border}`, color: t.loss }}
-                    >
+                    <button onClick={handleLogout} title="Se déconnecter" className="p-2 rounded-lg transition-colors" style={{ color: t.textMuted }}>
                       <LogOut size={16} />
                     </button>
                     <button
                       onClick={() => { setMonthlyModalKey((k) => k + 1); setMonthlyModalOpen(true); }}
-                      className="flex items-center gap-1 px-3 py-2 rounded text-sm"
-                      style={{ background: t.accent, color: t.bg }}
+                      className="flex items-center gap-1.5 pl-3 pr-4 py-2 rounded-xl text-sm font-medium ml-1"
+                      style={{ background: t.accent, color: t.onAccent, boxShadow: `0 4px 14px ${t.accent}55` }}
                     >
-                      <Plus size={14} /> Point mensuel
+                      <Plus size={15} /> Point mensuel
                     </button>
                   </div>
-                </div>
-
-                <div className="flex gap-1">
-                  {NAV_ITEMS.map((n) => (
-                    <button
-                      key={n.id}
-                      onClick={() => setTab(n.id)}
-                      className="px-4 py-2 text-sm"
-                      style={{
-                        color: tab === n.id ? t.text : t.textMuted,
-                        borderBottom: tab === n.id ? `2px solid ${t.accent}` : "2px solid transparent",
-                      }}
-                    >
-                      {n.label}
-                    </button>
-                  ))}
                 </div>
               </div>
             </div>
 
-            <div className="max-w-6xl mx-auto p-6">
+            <div className="max-w-6xl mx-auto px-4 md:px-6 py-6 md:py-8" style={{ fontFamily: FONT }}>
               {tab === "dashboard" && (
-                <div className="space-y-6">
-                  <div className="flex flex-wrap gap-4">
-                    <KPICard icon={Wallet} label="Patrimoine total" value={fmtEUR(lastMonthly.totalWealth)}
-                      sub={`${totalWealthChange >= 0 ? "+" : ""}${fmtEUR(totalWealthChange)} vs mois dernier`}
-                      highlight tone={totalWealthChange >= 0 ? "up" : "down"} />
+                <div className="space-y-5">
+                  <WarningsPanel items={monthlyWarnings} onOpen={() => setTab("historique")} />
+
+                  <div className="rounded-2xl p-5 md:p-7" style={{ background: t.panel, border: `1px solid ${t.border}`, boxShadow: t.shadow }}>
+                    <div className="flex flex-wrap items-end justify-between gap-4 mb-4">
+                      <div>
+                        <div className="text-sm font-medium" style={{ color: t.textMuted }}>Patrimoine total</div>
+                        <div className="text-4xl md:text-5xl font-semibold tracking-tight mt-1" style={{ color: t.text }}>{fmtEUR(lastMonthly.totalWealth)}</div>
+                        <div className="flex flex-wrap items-center gap-2 mt-2 text-sm">
+                          <span className="px-2 py-0.5 rounded-full font-medium"
+                            style={{ color: totalWealthChange >= 0 ? t.gain : t.loss, background: `${totalWealthChange >= 0 ? t.gain : t.loss}1f` }}>
+                            {totalWealthChange >= 0 ? "▲" : "▼"} {signed(totalWealthChange)} ({fmtPct(lastMonthVariationPct)})
+                          </span>
+                          <span style={{ color: t.textMuted }}>sur le dernier mois</span>
+                        </div>
+                      </div>
+                    </div>
+                    <WealthChart data={monthlyMetrics} />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                     <KPICard icon={TrendingUp} label="Gain lié aux placements" value={fmtEUR(cumGain)}
                       sub={`${fmtPct(cumGainPct)} du capital investi (${fmtEUR(investedNow)})`} tone={cumGain >= 0 ? "up" : "down"} />
                     <KPICard icon={PiggyBank} label="Épargne cumulée" value={fmtEUR(cumSavings)}
-                      sub="Versements sur placements + variation trésorerie" tone={cumSavings >= 0 ? "up" : "down"} />
-                    <KPICard icon={Percent} label="Variation du dernier mois" value={fmtPct(lastMonthVariationPct)}
-                      sub="Épargne (trésorerie comprise) + gain du mois" tone={lastMonthVariationPct >= 0 ? "up" : "down"} />
-                    <KPICard icon={TrendingUp} label="Gain placement moyen / an" value={fmtEUR(avgAnnualGainPlacement)}
-                      sub={`Ramené à 12 mois (sur ${monthsTracked} mois)`} tone={avgAnnualGainPlacement >= 0 ? "up" : "down"} />
+                      sub="Versements + variation de trésorerie" />
+                    <KPICard icon={Percent} label="Gain placement moyen / an" value={fmtEUR(avgAnnualGainPlacement)}
+                      sub={`Ramené à 12 mois (sur ${monthsTracked} mois)`} />
                     <KPICard icon={PiggyBank} label="Épargne moyenne / an" value={fmtEUR(avgAnnualGainEpargne)}
-                      sub={`Ramené à 12 mois (sur ${monthsTracked} mois)`} tone={avgAnnualGainEpargne >= 0 ? "up" : "down"} />
+                      sub={`Ramené à 12 mois (sur ${monthsTracked} mois)`} />
                   </div>
 
-                  <Panel title="Évolution mensuelle — épargne, placement et patrimoine total">
+                  <Panel title="Évolution mensuelle" subtitle="Ce que vous avez épargné et ce que vos placements ont rapporté, mois par mois">
                     <MonthlyEvolutionChart data={monthlyMetrics} />
                   </Panel>
 
-                  <Panel title="Bilan annuel — épargne, gain de placement et variation du patrimoine">
+                  <Panel title="Bilan annuel" subtitle="Épargne, gain de placement et variation du patrimoine par année">
                     <YearlyBarChart data={yearlyMetrics} />
                   </Panel>
 
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                     <Panel title="Répartition par catégorie">
                       <AllocationDonut data={categoryAlloc} colorFor={(k) => CATEGORY_COLOR(t)[k] || t.textMuted} />
                       <div className="mt-2 space-y-1">
@@ -2359,7 +2451,7 @@
                     </Panel>
                   </div>
 
-                  <Panel title="Évolution des comptes bourse — CTO Degiro, IBKR, PEA Phil, PEA Ghiz">
+                  <Panel title="Comptes bourse" subtitle="Valeur de chaque compte à chaque relevé">
                     <AccountsEvolutionChart series={monthlyEff} />
                   </Panel>
                 </div>
@@ -2392,7 +2484,8 @@
 
               {tab === "historique" && (
                 <div className="space-y-6">
-                  <Panel title="Points mensuels — correction manuelle">
+                  <WarningsPanel items={monthlyWarnings} />
+                  <Panel title="Relevés mensuels" subtitle="Correction manuelle des valeurs et des mouvements">
                     <HistoryTab monthly={monthly} setMonthly={setMonthly} />
                   </Panel>
                 </div>
@@ -2430,8 +2523,8 @@
 
       if (loading) {
         return (
-          <div className="min-h-screen w-full flex items-center justify-center bg-[#14171C]">
-            <p className="text-sm text-[#B6BECE]">Vérification de l'accès...</p>
+          <div className="min-h-screen w-full flex items-center justify-center bg-[#0e0f11]">
+            <p className="text-sm text-[#a3a29b]">Vérification de l'accès...</p>
           </div>
         );
       }
