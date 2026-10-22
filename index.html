@@ -2294,10 +2294,8 @@
     // APPLICATION PRINCIPALE
     // =========================================================================
     // ================== CHAT CLAUDE ==================
-    // La clé API reste dans le navigateur de cet appareil (jamais envoyée à Firebase).
-    const CLAUDE_KEY_STORAGE = "claude_api_key";
-    const readClaudeKey = () => { try { return localStorage.getItem(CLAUDE_KEY_STORAGE) || ""; } catch { return ""; } };
-    const writeClaudeKey = (k) => { try { k ? localStorage.setItem(CLAUDE_KEY_STORAGE, k) : localStorage.removeItem(CLAUDE_KEY_STORAGE); } catch {} };
+    // La clé API est rattachée au compte connecté : un document Firebase par utilisateur.
+    const claudeKeyRef = (uid) => doc(db, "patrimoine", `claude_${uid}`);
 
     const CHAT_INSTRUCTIONS = `Tu es l'assistant de l'application « Mon patrimoine », un tableau de bord personnel de suivi de patrimoine.
 L'utilisateur te pose des questions sur ses chiffres : réponds en français, de façon concise, en t'appuyant uniquement sur les données fournies ci-dessous.
@@ -2355,10 +2353,11 @@ Méthode de calcul de l'application :
       "Quelles sont mes positions en perte ?",
     ];
 
-    function ClaudeChat({ open, onClose, seed, context }) {
+    function ClaudeChat({ open, onClose, seed, context, uid }) {
       const t = useTheme();
       const isMobile = useIsMobile();
-      const [apiKey, setApiKey] = useState(readClaudeKey);
+      const [apiKey, setApiKey] = useState("");
+      const [keyLoaded, setKeyLoaded] = useState(false);
       const [keyDraft, setKeyDraft] = useState("");
       const [messages, setMessages] = useState([]);
       const [input, setInput] = useState("");
@@ -2367,16 +2366,34 @@ Méthode de calcul de l'application :
       const scrollRef = useRef(null);
       const streamRef = useRef(null);
 
+      useEffect(() => {
+        let annule = false;
+        setKeyLoaded(false);
+        getDoc(claudeKeyRef(uid))
+          .then((snap) => { if (!annule) setApiKey(snap.exists() ? snap.data().apiKey || "" : ""); })
+          .catch((e) => { console.error("Lecture clé Claude:", e); if (!annule) setError("Impossible de lire la clé API du compte."); })
+          .finally(() => { if (!annule) setKeyLoaded(true); });
+        return () => { annule = true; };
+      }, [uid]);
       useEffect(() => { if (seed?.text) setInput(seed.text); }, [seed]);
       useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }); }, [messages, open]);
       useEffect(() => () => streamRef.current?.abort(), []);
 
-      const saveKey = () => {
+      const saveKey = async () => {
         const k = keyDraft.trim();
         if (!k) return;
-        writeClaudeKey(k); setApiKey(k); setKeyDraft(""); setError(null);
+        try {
+          await setDoc(claudeKeyRef(uid), { apiKey: k });
+          setApiKey(k); setKeyDraft(""); setError(null);
+        } catch (e) {
+          console.error("Enregistrement clé Claude:", e);
+          setError("Impossible d'enregistrer la clé sur le compte.");
+        }
       };
-      const forgetKey = () => { writeClaudeKey(""); setApiKey(""); };
+      const forgetKey = () => {
+        setApiKey("");
+        setDoc(claudeKeyRef(uid), { apiKey: "" }).catch((e) => console.error("Suppression clé Claude:", e));
+      };
 
       const send = async (text) => {
         const question = (text ?? input).trim();
@@ -2388,7 +2405,7 @@ Méthode de calcul de l'application :
         try {
           const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
           const stream = client.beta.messages.stream({
-            model: "claude-opus-5-5",
+            model: "claude-sonnet-5-5",
             max_tokens: 16000,
             output_config: { effort: "medium" },
             betas: ["server-side-fallback-2026-07-01"],
@@ -2441,7 +2458,7 @@ Méthode de calcul de l'application :
               </button>
             )}
             {apiKey && (
-              <button onClick={forgetKey} title="Oublier la clé API sur cet appareil" className="p-2 rounded-lg" style={{ color: t.textMuted }}>
+              <button onClick={forgetKey} title="Retirer la clé API du compte" className="p-2 rounded-lg" style={{ color: t.textMuted }}>
                 <KeyRound size={15} />
               </button>
             )}
@@ -2451,11 +2468,13 @@ Méthode de calcul de l'application :
           </div>
 
           <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
-            {!apiKey ? (
+            {!keyLoaded ? (
+              <p className="text-sm" style={{ color: t.textMuted }}>Chargement…</p>
+            ) : !apiKey ? (
               <div className="space-y-3 text-sm" style={{ color: t.text }}>
                 <p>Pour discuter avec Claude, saisissez votre clé API Anthropic (console.anthropic.com).</p>
                 <p className="text-xs" style={{ color: t.textMuted }}>
-                  Elle est conservée uniquement dans ce navigateur. Les données du patrimoine sont envoyées à l'API Claude à chaque question.
+                  Elle est enregistrée sur votre compte et sera disponible sur tous vos appareils. Les données du patrimoine sont envoyées à l'API Claude à chaque question.
                 </p>
                 <input type="password" value={keyDraft} onChange={(e) => setKeyDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && saveKey()}
                   placeholder="sk-ant-…" autoComplete="off" className="w-full px-3 py-2 rounded-xl text-sm outline-none"
@@ -3058,7 +3077,7 @@ Méthode de calcul de l'application :
             </>
           )}
 
-          <ClaudeChat open={chatOpen} onClose={() => setChatOpen(false)} seed={chatSeed} context={chatContext} />
+          <ClaudeChat open={chatOpen} onClose={() => setChatOpen(false)} seed={chatSeed} context={chatContext} uid={auth.currentUser?.uid} />
 
           <MonthlySnapshotModal
             key={monthlyModalKey}
