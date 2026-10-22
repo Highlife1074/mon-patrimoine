@@ -57,13 +57,18 @@ Univers : actions US (NYSE/NASDAQ/AMEX, hors OTC) et Euronext Paris (éligibles 
 - Une fois l'entrée déclenchée, l'actualisation suivante crée les alertes de gestion :
   `[TEND|RET] TICKER – SL xx` (`cross_down`), `– TP1 xx`, `– TP2 xx`, `– TP3 xx` (`cross_up`).
 - Seules des alertes de prix simples sont possibles via l'API (pas d'alertes indicateur ni webhook).
+- ⚠ **Euronext : l'API crée les alertes en USD** (`currency-id: USD`), quel que soit le symbole. Les niveaux restent
+  calculés en € (etat.json), mais le seuil de l'alerte = niveau € × EURUSD (cours `FX:EURUSD` du jour de création).
+  Le nom de l'alerte indique les deux (`ENTRÉE 14.63 € (seuil 16.45 $)`). À chaque actualisation, si EURUSD a bougé
+  de plus de 0,5 %, recréer les alertes Euronext avec le nouveau taux.
 
 ## 5. Procédure d'actualisation (lundi et jeudi)
 1. Lire `etat.json`.
 2. Lister les alertes TradingView préfixées `[TEND]` / `[RET]` :
    - **Entrée déclenchée** (`last_fire_time` non nul) → la valeur passe en statut `en_position` : créer les 4 alertes de gestion (SL, TP1, TP2, TP3), la garder dans la watchlist.
    - **Position en cours** → si SL ou TP3 déclenché : statut `cloturee`, supprimer les alertes restantes, retirer de la watchlist. Si TP1 touché : supprimer l'ancienne alerte SL et en créer une au prix d'entrée (break-even) ; si TP2 touché : SL à TP1.
-   - **Entrée non déclenchée** → relancer les filtres. Si la valeur ne passe plus les filtres (ou setup invalidé : cours sous le SL prévu) : supprimer l'alerte, retirer de la watchlist. Sinon recalculer les niveaux ; si l'entrée change de plus de 0,5 %, supprimer et recréer l'alerte.
+   - **Entrée non déclenchée** → si le setup est invalidé (cours passé sous le SL prévu, ou tendance cassée : close < SMA50 pour la liste tendance) : supprimer l'alerte, retirer de la watchlist. Les filtres RSI/perf servent à sélectionner les nouveaux candidats ; un RSI qui remonte vers la cassure n'est pas une raison de retrait.
+   - Vérifier aussi, via OHLCV, que le plus haut de la séance n'a pas dépassé l'entrée sans que l'alerte se déclenche (cas Euronext). Sinon recalculer les niveaux ; si l'entrée change de plus de 0,5 %, supprimer et recréer l'alerte.
 3. Compléter chaque liste jusqu'à 6 valeurs avec les meilleurs nouveaux candidats (tri `Perf.3M` pour la tendance, capitalisation + RSI qui remonte pour les retournements), créer leurs alertes d'entrée.
 4. Mettre à jour `etat.json` (niveaux, ids d'alertes, statut, date) et ajouter une ligne dans `journal.md`.
 5. Commit + push sur la branche `claude/lucid-darwin-mxinhp`.

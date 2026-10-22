@@ -1,6 +1,6 @@
 {
-  "derniere_actualisation": "2026-10-20",
-  "prochaine_actualisation": "2026-10-22 (jeudi)",
+  "derniere_actualisation": "2026-10-22",
+  "prochaine_actualisation": "2026-10-26 (lundi)",
   "watchlists": {
     "tendance": {
       "tradingview_id": 351707303,
@@ -13,15 +13,16 @@
           "tp2": 98.84,
           "tp3": 109.44,
           "risk_pct": 8.7,
-          "atr": 2.826,
-          "ref_high": 80.61,
-          "ref_low": 67.96,
-          "next_earnings": "2026-12-03",
-          "statut": "attente_entree",
+          "statut": "en_position",
           "alertes": {
-            "entree": 5889147504
+            "entree_declenchee": "2026-10-21T13:40Z",
+            "sl": 5900473934,
+            "tp1": 5900473983,
+            "tp2": 5900474027,
+            "tp3": 5900474050
           },
-          "ajoute_le": "2026-10-20"
+          "ajoute_le": "2026-10-20",
+          "next_earnings": "2026-12-03"
         },
         {
           "symbol": "NYSE:SN",
@@ -31,15 +32,16 @@
           "tp2": 241.93,
           "tp3": 266.9,
           "risk_pct": 8.3,
-          "atr": 6.66,
-          "ref_high": 198.97,
-          "ref_low": 181.1,
-          "next_earnings": "2026-11-04",
-          "statut": "attente_entree",
+          "statut": "en_position",
           "alertes": {
-            "entree": 5889147513
+            "entree_declenchee": "2026-10-21T15:25Z",
+            "sl": 5900474084,
+            "tp1": 5900474152,
+            "tp2": 5900474190,
+            "tp3": 5900474222
           },
-          "ajoute_le": "2026-10-20"
+          "ajoute_le": "2026-10-20",
+          "next_earnings": "2026-11-04"
         },
         {
           "symbol": "NYSE:A",
@@ -49,15 +51,13 @@
           "tp2": 207.69,
           "tp3": 225.26,
           "risk_pct": 6.6,
-          "atr": 4.685,
-          "ref_high": 177.47,
-          "ref_low": 163.32,
-          "next_earnings": "2026-11-30",
           "statut": "attente_entree",
           "alertes": {
             "entree": 5889147525
           },
-          "ajoute_le": "2026-10-20"
+          "ajoute_le": "2026-10-20",
+          "next_earnings": "2026-11-30",
+          "note": "22/10 : plus haut 178.21, entrée recalculée 179.19 (écart <0,5 %) -> alerte conservée"
         },
         {
           "symbol": "NASDAQ:TEAM",
@@ -67,15 +67,16 @@
           "tp2": 284.09,
           "tp3": 319.2,
           "risk_pct": 10.4,
-          "atr": 9.363,
-          "ref_high": 223.7,
-          "ref_low": 193.49,
-          "next_earnings": "2026-11-05",
-          "statut": "attente_entree",
+          "statut": "en_position",
           "alertes": {
-            "entree": 5889147534
+            "entree_declenchee": "2026-10-21T14:26Z",
+            "sl": 5900474250,
+            "tp1": 5900474288,
+            "tp2": 5900475350,
+            "tp3": 5900475860
           },
-          "ajoute_le": "2026-10-20"
+          "ajoute_le": "2026-10-20",
+          "next_earnings": "2026-11-05"
         },
         {
           "symbol": "EURONEXT:TEP",
@@ -85,15 +86,17 @@
           "tp2": 91.88,
           "tp3": 100.57,
           "risk_pct": 7.5,
-          "atr": 2.319,
-          "ref_high": 76.92,
-          "ref_low": 69.74,
-          "next_earnings": "2027-02-18",
-          "statut": "attente_entree",
+          "statut": "en_position",
           "alertes": {
-            "entree": 5889147542
+            "entree_atteinte": "2026-10-21 (plus haut 79.00 €) – alerte non déclenchée, bug devise USD",
+            "sl": 5900475889,
+            "tp1": 5900475922,
+            "tp2": 5900475950,
+            "tp3": 5900475989
           },
-          "ajoute_le": "2026-10-20"
+          "ajoute_le": "2026-10-20",
+          "devise": "EUR",
+          "seuils_alertes_usd_eurusd": 1.12428
         },
         {
           "symbol": "EURONEXT:ITP",
@@ -103,15 +106,18 @@
           "tp2": 37.3,
           "tp3": 39.97,
           "risk_pct": 5.4,
-          "atr": 0.713,
-          "ref_high": 32.7,
-          "ref_low": 30.02,
-          "next_earnings": "2027-02-24",
-          "statut": "attente_entree",
+          "statut": "en_position",
           "alertes": {
-            "entree": 5889147807
+            "entree_atteinte": "2026-10-21 (plus haut 34.88 €) – alerte non déclenchée, bug devise USD",
+            "sl": 5900476025,
+            "tp1": 5900476060,
+            "tp2": 5900476092,
+            "tp3": 5900476546
           },
-          "ajoute_le": "2026-10-20"
+          "ajoute_le": "2026-10-20",
+          "devise": "EUR",
+          "seuils_alertes_usd_eurusd": 1.12428,
+          "note": "RSI 74-81 : surachat, entrée tardive déconseillée"
         }
       ]
     },
@@ -120,113 +126,118 @@
       "valeurs": [
         {
           "symbol": "NASDAQ:AVGO",
-          "entry": 356.54,
-          "sl": 326.29,
-          "tp1": 401.93,
-          "tp2": 432.19,
-          "tp3": 477.58,
-          "risk_pct": 8.5,
-          "atr": 11.472,
-          "ref_high": 354.25,
-          "ref_low": 328.58,
+          "entry": 346.93,
+          "sl": 326.35,
+          "tp1": 377.8,
+          "tp2": 398.38,
+          "tp3": 429.25,
+          "risk_pct": 5.9,
+          "statut": "attente_entree",
+          "alertes": {
+            "entree": 5900469426
+          },
+          "ajoute_le": "2026-10-20",
           "next_earnings": "2026-12-10",
-          "statut": "attente_entree",
-          "alertes": {
-            "entree": 5889147815
-          },
-          "ajoute_le": "2026-10-20"
-        },
-        {
-          "symbol": "NASDAQ:NFLX",
-          "entry": 73.45,
-          "sl": 67.73,
-          "tp1": 82.03,
-          "tp2": 87.75,
-          "tp3": 96.34,
-          "risk_pct": 7.8,
-          "atr": 1.907,
-          "ref_high": 73.07,
-          "ref_low": 66.54,
-          "next_earnings": "2027-01-26",
-          "statut": "attente_entree",
-          "alertes": {
-            "entree": 5889147826
-          },
-          "ajoute_le": "2026-10-20"
+          "note": "22/10 : entrée recalculée 356.54 -> 346.93"
         },
         {
           "symbol": "NASDAQ:GFS",
-          "entry": 50.28,
-          "sl": 44.64,
-          "tp1": 58.74,
-          "tp2": 64.39,
-          "tp3": 72.85,
-          "risk_pct": 11.2,
-          "atr": 2.41,
-          "ref_high": 49.8,
-          "ref_low": 45.122,
-          "next_earnings": "2026-11-04",
+          "entry": 49.54,
+          "sl": 44.65,
+          "tp1": 56.87,
+          "tp2": 61.77,
+          "tp3": 69.1,
+          "risk_pct": 9.9,
           "statut": "attente_entree",
           "alertes": {
-            "entree": 5889147833
+            "entree": 5900469454
           },
-          "ajoute_le": "2026-10-20"
+          "ajoute_le": "2026-10-20",
+          "next_earnings": "2026-11-04",
+          "note": "22/10 : entrée recalculée 50.28 -> 49.54"
         },
         {
-          "symbol": "EURONEXT:RMS",
-          "entry": 1360.1,
-          "sl": 1252.9,
-          "tp1": 1521.0,
-          "tp2": 1628.2,
-          "tp3": 1789.0,
-          "risk_pct": 7.9,
-          "atr": 35.74,
-          "ref_high": 1353,
-          "ref_low": 1255,
-          "next_earnings": "2027-02-11",
+          "symbol": "NYSE:CIEN",
+          "entry": 369.21,
+          "sl": 323.64,
+          "tp1": 437.55,
+          "tp2": 483.11,
+          "tp3": 551.45,
+          "risk_pct": 12.3,
           "statut": "attente_entree",
           "alertes": {
-            "entree": 5889147848
+            "entree": 5900469482
           },
-          "ajoute_le": "2026-10-20"
+          "ajoute_le": "2026-10-22",
+          "next_earnings": "2026-12-10",
+          "note": "risque large : taille réduite"
         },
         {
           "symbol": "EURONEXT:ORA",
           "entry": 14.63,
-          "sl": 13.73,
-          "tp1": 15.98,
-          "tp2": 16.88,
-          "tp3": 18.23,
-          "risk_pct": 6.2,
-          "atr": 0.3,
-          "ref_high": 14.57,
-          "ref_low": 13.515,
-          "next_earnings": "2027-02-18",
+          "sl": 13.74,
+          "tp1": 15.96,
+          "tp2": 16.84,
+          "tp3": 18.17,
+          "risk_pct": 6.1,
           "statut": "attente_entree",
           "alertes": {
-            "entree": 5889147858
+            "entree": 5900469509
           },
-          "ajoute_le": "2026-10-20"
+          "ajoute_le": "2026-10-20",
+          "next_earnings": "2027-02-18",
+          "devise": "EUR",
+          "seuils_alertes_usd_eurusd": 1.12428
         },
         {
           "symbol": "EURONEXT:DG",
-          "entry": 108.95,
-          "sl": 103.85,
-          "tp1": 116.6,
-          "tp2": 121.7,
-          "tp3": 129.35,
-          "risk_pct": 4.7,
-          "atr": 2.002,
-          "ref_high": 108.55,
-          "ref_low": 104.25,
-          "next_earnings": "2027-02-10",
+          "entry": 108.89,
+          "sl": 103.86,
+          "tp1": 116.45,
+          "tp2": 121.49,
+          "tp3": 129.05,
+          "risk_pct": 4.6,
           "statut": "attente_entree",
           "alertes": {
-            "entree": 5889147866
+            "entree": 5900469539
           },
-          "ajoute_le": "2026-10-20"
+          "ajoute_le": "2026-10-20",
+          "next_earnings": "2027-02-10",
+          "devise": "EUR",
+          "seuils_alertes_usd_eurusd": 1.12428
+        },
+        {
+          "symbol": "EURONEXT:ENGI",
+          "entry": 23.59,
+          "sl": 22.18,
+          "tp1": 25.71,
+          "tp2": 27.12,
+          "tp3": 29.23,
+          "risk_pct": 6.0,
+          "statut": "attente_entree",
+          "alertes": {
+            "entree": 5900469832
+          },
+          "ajoute_le": "2026-10-22",
+          "next_earnings": "2027-03-04",
+          "devise": "EUR",
+          "seuils_alertes_usd_eurusd": 1.12428
         }
       ]
     }
-  }
+  },
+  "retirees": [
+    {
+      "symbol": "NASDAQ:NFLX",
+      "liste": "retournement",
+      "date": "2026-10-22",
+      "raison": "setup invalidé : plus bas 64.10 sous le SL prévu 67.73"
+    },
+    {
+      "symbol": "EURONEXT:RMS",
+      "liste": "retournement",
+      "date": "2026-10-22",
+      "raison": "setup invalidé : chute -8.5 % le 22/10, plus bas 1234 € sous le SL prévu 1252.9 €"
+    }
+  ]
 }
