@@ -676,7 +676,7 @@
             </defs>
             <CartesianGrid stroke={t.border} vertical={false} />
             <XAxis dataKey="periode" tickFormatter={monthLabel} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} minTickGap={28} />
-            <YAxis tickFormatter={(v) => `${Math.round(v / 1000)}k`} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} width={44} domain={["dataMin - 20000", "dataMax + 20000"]} />
+            <YAxis tickFormatter={(v) => `${Math.round(v / 1000)}k`} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} width={44} domain={["auto", "auto"]} />
             <Tooltip
               cursor={{ stroke: t.textMuted, strokeDasharray: "3 3" }}
               contentStyle={tooltipStyle(t)}
@@ -747,7 +747,8 @@
               <Line dataKey="labelY" stroke="none" legendType="none" isAnimationActive={false} activeDot={false}
                 dot={(props) => {
                   const { cx, cy, payload, index } = props;
-                  if (cx == null || cy == null) return <g key={index} />;
+                  // Étiquettes sélectives : seulement les mois qui bougent d'au moins 10 k€
+                  if (cx == null || cy == null || Math.abs(payload.monthChange) < 10000) return <g key={index} />;
                   const up = payload.monthChange >= 0;
                   return (
                     <text key={index} x={cx} y={up ? cy - 6 : cy + 13} textAnchor="middle" fontSize={10} fontWeight={600} fill={t.textMuted}>
@@ -1828,7 +1829,7 @@
             setArmed(false);
             onConfirm();
           }}
-          className="text-xs px-2 py-2 rounded"
+          className="text-xs px-2.5 py-2 rounded-lg"
           style={{ color: armed ? t.loss : t.textMuted, border: `1px solid ${armed ? t.loss : t.border}` }}
         >
           {armed ? "Confirmer la réinitialisation" : "Réinitialiser"}
@@ -1976,7 +1977,7 @@
                         style={{ ...cellStyle, width: 118, background: "transparent", color: t.textMuted }}
                       />
                       {r.warning && (
-                        <div className="mt-0.5" title={r.warning} style={{ fontSize: 10, color: t.accent, maxWidth: 118 }}>⚠ {r.warning}</div>
+                        <div className="mt-1 rounded-md px-1.5 py-1" title={r.warning} style={{ fontSize: 10, lineHeight: 1.3, color: t.text, background: `${t.warning}1f`, border: `1px solid ${t.warning}66`, maxWidth: 118 }}><span style={{ color: t.warning }}>⚠</span> {r.warning}</div>
                       )}
                     </td>
                     {accounts.map((a) => {
@@ -2325,24 +2326,6 @@
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1 p-1 rounded-xl order-last md:order-none w-full md:w-auto" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
-                    {NAV_ITEMS.map((n) => (
-                      <button
-                        key={n.id}
-                        onClick={() => setTab(n.id)}
-                        className="flex-1 md:flex-none px-3 md:px-4 py-1.5 text-sm rounded-lg transition-all"
-                        style={{
-                          color: tab === n.id ? t.text : t.textMuted,
-                          background: tab === n.id ? t.panel : "transparent",
-                          boxShadow: tab === n.id ? t.shadow : "none",
-                          fontWeight: tab === n.id ? 600 : 400,
-                        }}
-                      >
-                        {n.label}
-                      </button>
-                    ))}
-                  </div>
-
                   <div className="flex items-center gap-1.5">
                     <ResetButton onConfirm={handleReset} />
                     <button onClick={handleExport} title="Télécharger une sauvegarde JSON" className="p-2 rounded-lg transition-colors" style={{ color: t.textMuted }}>
@@ -2364,10 +2347,27 @@
                       className="flex items-center gap-1.5 pl-3 pr-4 py-2 rounded-xl text-sm font-medium ml-1"
                       style={{ background: t.accent, color: t.onAccent, boxShadow: `0 4px 14px ${t.accent}55` }}
                     >
-                      <Plus size={15} /> Point mensuel
+                      <Plus size={15} /> <span className="whitespace-nowrap">Point<span className="hidden sm:inline"> mensuel</span></span>
                     </button>
                   </div>
                 </div>
+                  <div className="flex items-center gap-1 p-1 rounded-xl mt-4 w-full sm:w-fit overflow-x-auto" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
+                    {NAV_ITEMS.map((n) => (
+                      <button
+                        key={n.id}
+                        onClick={() => setTab(n.id)}
+                        className="flex-1 sm:flex-none whitespace-nowrap px-3 md:px-4 py-1.5 text-sm rounded-lg transition-all"
+                        style={{
+                          color: tab === n.id ? t.text : t.textMuted,
+                          background: tab === n.id ? t.panel : "transparent",
+                          boxShadow: tab === n.id ? t.shadow : "none",
+                          fontWeight: tab === n.id ? 600 : 400,
+                        }}
+                      >
+                        {n.label}
+                      </button>
+                    ))}
+                  </div>
               </div>
             </div>
 
