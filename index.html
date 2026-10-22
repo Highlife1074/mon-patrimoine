@@ -2,7 +2,10 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0e0f11">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Poste de pilotage patrimoine</title>
   
   <script src="https://cdn.tailwindcss.com"></script>
@@ -19,6 +22,10 @@
       }
     }
   </script>
+  <style>
+    /* iPhone : une police < 16px dans un champ déclenche un zoom à la saisie */
+    @media (max-width: 767px) { input, select, textarea { font-size: 16px !important; } }
+  </style>
 </head>
 <body style="margin:0;background:#0e0f11;font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;-webkit-font-smoothing:antialiased">
   <div id="root"></div>
@@ -35,7 +42,8 @@
     import {
       Wallet, TrendingUp, PiggyBank, Percent, Plus, Moon, Sun,
       ChevronDown, ChevronRight, ChevronLeft, X, ArrowUpRight, ArrowDownRight,
-      Link2, Check, Clock, ArrowLeftRight, RefreshCw, Download, Upload, LogOut
+      Link2, Check, Clock, ArrowLeftRight, RefreshCw, Download, Upload, LogOut,
+      LayoutDashboard, Briefcase, History, MoreHorizontal
     } from "lucide-react";
     
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
@@ -532,6 +540,17 @@
     const ThemeCtx = createContext(THEMES.dark);
     const SECTOR_PALETTE = (t) => [t.s1, t.s2, t.s3, t.s4, t.s5, t.s6, t.s7, t.s8, t.textMuted];
     const useTheme = () => useContext(ThemeCtx);
+    const MOBILE_QUERY = "(max-width: 767px)";
+    function useIsMobile() {
+      const [mobile, setMobile] = useState(() => window.matchMedia(MOBILE_QUERY).matches);
+      useEffect(() => {
+        const mq = window.matchMedia(MOBILE_QUERY);
+        const onChange = (e) => setMobile(e.matches);
+        mq.addEventListener("change", onChange);
+        return () => mq.removeEventListener("change", onChange);
+      }, []);
+      return mobile;
+    }
     const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
     const NUM = { fontVariantNumeric: "tabular-nums" };
     const tooltipStyle = (t) => ({
@@ -608,15 +627,15 @@
       const toneColor = tone === "up" ? t.gain : tone === "down" ? t.loss : t.textMuted;
       const arrow = tone === "up" ? "▲ " : tone === "down" ? "▼ " : "";
       return (
-        <div className="rounded-2xl p-5 flex flex-col gap-3" style={{ background: t.panel, border: `1px solid ${t.border}`, boxShadow: t.shadow }}>
+        <div className="rounded-2xl p-4 md:p-5 flex flex-col gap-2 md:gap-3" style={{ background: t.panel, border: `1px solid ${t.border}`, boxShadow: t.shadow }}>
           <div className="flex items-center gap-2">
-            <span className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ background: `${t.accent}1f` }}>
+            <span className="w-7 h-7 md:w-8 md:h-8 shrink-0 rounded-xl flex items-center justify-center" style={{ background: `${t.accent}1f` }}>
               <Icon size={16} color={t.accent} />
             </span>
-            <span className="text-xs font-medium" style={{ color: t.textMuted }}>{label}</span>
+            <span className="text-xs font-medium leading-tight" style={{ color: t.textMuted }}>{label}</span>
           </div>
-          <div className="text-2xl font-semibold tracking-tight" style={{ color: t.text }}>{value}</div>
-          {sub && <div className="text-xs" style={{ color: toneColor }}>{arrow}{sub}</div>}
+          <div className="text-xl md:text-2xl font-semibold tracking-tight" style={{ color: t.text, ...NUM }}>{value}</div>
+          {sub && <div className="text-[11px] md:text-xs leading-snug" style={{ color: toneColor }}>{arrow}{sub}</div>}
         </div>
       );
     }
@@ -625,7 +644,7 @@
       const t = useTheme();
       const [collapsed, setCollapsed] = useState(!!defaultCollapsed);
       return (
-        <div className="rounded-2xl p-5 md:p-6" style={{ background: t.panel, border: `1px solid ${t.border}`, boxShadow: t.shadow }}>
+        <div className="rounded-2xl p-4 md:p-6" style={{ background: t.panel, border: `1px solid ${t.border}`, boxShadow: t.shadow }}>
           <div
             className={`flex items-start justify-between gap-4 ${collapsed ? "" : "mb-5"} ${collapsible ? "cursor-pointer select-none" : ""}`}
             onClick={collapsible ? () => setCollapsed((c) => !c) : undefined}
@@ -665,8 +684,9 @@
 
     function WealthChart({ data }) {
       const t = useTheme();
+      const isMobile = useIsMobile();
       return (
-        <ResponsiveContainer width="100%" height={220}>
+        <ResponsiveContainer width="100%" height={isMobile ? 170 : 220}>
           <AreaChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
             <defs>
               <linearGradient id="wealthFill" x1="0" y1="0" x2="0" y2="1">
@@ -692,6 +712,7 @@
 
     function MonthlyEvolutionChart({ data }) {
       const t = useTheme();
+      const isMobile = useIsMobile();
       const chartData = data.slice(1).map((m) => ({
         ...m,
         labelY: m.monthChange >= 0
@@ -701,7 +722,7 @@
       return (
         <div>
           <ChartLegend items={[{ label: "Épargne (versements + trésorerie)", color: t.capital }, { label: "Placement", color: t.placement }]} />
-          <ResponsiveContainer width="100%" height={340}>
+          <ResponsiveContainer width="100%" height={isMobile ? 260 : 340}>
             <ComposedChart data={chartData} stackOffset="sign" margin={{ top: 20, right: 8, left: 0, bottom: 0 }} barCategoryGap="25%">
               <CartesianGrid stroke={t.border} vertical={false} />
               <XAxis dataKey="periode" tickFormatter={monthLabel} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} minTickGap={18} />
@@ -765,10 +786,11 @@
 
     function YearlyBarChart({ data }) {
       const t = useTheme();
+      const isMobile = useIsMobile();
       return (
         <div>
           <ChartLegend items={[{ label: "Épargne (versements + trésorerie)", color: t.capital }, { label: "Placement", color: t.placement }]} />
-          <ResponsiveContainer width="100%" height={300}>
+          <ResponsiveContainer width="100%" height={isMobile ? 240 : 300}>
             <ComposedChart data={data.map((y) => ({ ...y, labelY: y.wealthChange >= 0 ? Math.max(y.epargne, 0) + Math.max(y.gain, 0) : Math.min(y.epargne, 0) + Math.min(y.gain, 0) }))}
               stackOffset="sign" margin={{ top: 26, right: 8, left: 0, bottom: 0 }} barCategoryGap="35%">
               <CartesianGrid stroke={t.border} vertical={false} />
@@ -792,8 +814,8 @@
                   if (cx == null || cy == null) return <g key={index} />;
                   const up = payload.wealthChange >= 0;
                   return (
-                    <text key={index} x={cx} y={up ? cy - 8 : cy + 16} textAnchor="middle" fontSize={12} fontWeight={600} fill={t.text}>
-                      {signed(payload.wealthChange)}
+                    <text key={index} x={cx} y={up ? cy - 8 : cy + 16} textAnchor="middle" fontSize={isMobile ? 10 : 12} fontWeight={600} fill={t.text}>
+                      {isMobile ? kLabel(payload.wealthChange) : signed(payload.wealthChange)}
                     </text>
                   );
                 }}
@@ -806,13 +828,14 @@
 
     function AccountsEvolutionChart({ series }) {
       const t = useTheme();
+      const isMobile = useIsMobile();
       const colors = { cto: t.s1, ibkr: t.s2, pea_phil: t.s3, pea_ghiz: t.s4 };
       const labels = { cto: "CTO Degiro", ibkr: "IBKR", pea_phil: "PEA Phil", pea_ghiz: "PEA Ghiz" };
       const data = series.map((s) => ({ date: s.date, ...s.byAccount }));
       return (
         <div>
           <ChartLegend items={Object.keys(colors).map((k) => ({ label: labels[k], color: colors[k] }))} />
-          <ResponsiveContainer width="100%" height={300}>
+          <ResponsiveContainer width="100%" height={isMobile ? 240 : 300}>
             <LineChart data={data} margin={{ top: 5, right: 8, left: 0, bottom: 0 }}>
               <CartesianGrid stroke={t.border} vertical={false} />
               <XAxis dataKey="date" tickFormatter={(d) => new Date(d).toLocaleDateString("fr-FR", { month: "short", year: "2-digit" })} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} minTickGap={28} />
@@ -852,33 +875,38 @@
 
     function WarningsPanel({ items, onOpen }) {
       const t = useTheme();
+      const isMobile = useIsMobile();
+      const [open, setOpen] = useState(!isMobile);
       if (!items.length) return null;
       return (
         <div className="rounded-2xl p-4 md:p-5" style={{ background: `${t.warning}14`, border: `1px solid ${t.warning}66` }}>
-          <div className="flex items-center justify-between gap-3 mb-2">
-            <div className="text-sm font-semibold" style={{ color: t.text }}>
+          <div className={`flex items-center justify-between gap-3 ${open ? "mb-2" : ""}`}>
+            <button type="button" onClick={() => setOpen((o) => !o)} className="text-sm font-semibold flex items-center gap-1.5 text-left" style={{ color: t.text }}>
               <span style={{ color: t.warning }}>⚠</span> {items.length} relevé{items.length > 1 ? "s" : ""} à vérifier
-            </div>
+              {open ? <ChevronDown size={14} color={t.textMuted} /> : <ChevronRight size={14} color={t.textMuted} />}
+            </button>
             {onOpen && (
               <button onClick={onOpen} className="text-xs px-3 py-1.5 rounded-lg" style={{ border: `1px solid ${t.border}`, color: t.text, background: t.panel }}>
                 Voir l'historique
               </button>
             )}
           </div>
-          <ul className="space-y-1">
+          {open && <ul className="space-y-1.5">
             {items.map((m) => (
-              <li key={m.id} className="text-xs flex gap-2" style={{ color: t.textMuted }}>
+              <li key={m.id} className="text-xs flex flex-col md:flex-row gap-0.5 md:gap-2" style={{ color: t.textMuted }}>
                 <span className="shrink-0 font-medium" style={{ color: t.text, ...NUM }}>{new Date(m.date).toLocaleDateString("fr-FR")}</span>
                 <span>{m.warning}</span>
               </li>
             ))}
-          </ul>
+          </ul>}
         </div>
       );
     }
 
     function PositionsImport({ onImport }) {
       const t = useTheme();
+      const isMobile = useIsMobile();
+      const [open, setOpen] = useState(!isMobile);
       const [accountId, setAccountId] = useState(BOURSE_ACCOUNTS[0].id);
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState("");
@@ -901,8 +929,17 @@
         setLoading(false);
       };
 
+      if (!open) {
+        return (
+          <button type="button" onClick={() => setOpen(true)} className="w-full flex items-center gap-2 rounded-xl px-4 py-3 mb-4 text-sm text-left"
+            style={{ background: t.panelAlt, border: `1px solid ${t.border}`, color: t.text }}>
+            <Upload size={15} color={t.textMuted} /> Importer un fichier de positions
+            <ChevronRight size={15} color={t.textMuted} className="ml-auto" />
+          </button>
+        );
+      }
       return (
-        <div className="rounded-lg p-4 mb-4" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
+        <div className="rounded-xl p-4 mb-4" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
           <div className="flex flex-wrap items-end gap-3">
             <div>
               <label className="text-xs block mb-1" style={{ color: t.textMuted }}>Compte</label>
@@ -968,6 +1005,7 @@
 
     function PositionsTable({ positions, onUpdate }) {
       const t = useTheme();
+      const isMobile = useIsMobile();
       const [groupBy, setGroupBy] = useState("category");
       const [expanded, setExpanded] = useState({});
       const [sortKey, setSortKey] = useState("value");
@@ -1116,6 +1154,65 @@
             </div>
           )}
 
+          {isMobile && (
+            <div className="space-y-4">
+              {Object.entries(groups).map(([groupName, rows]) => {
+                const groupValue = rows.reduce((s, p) => s + p.value, 0);
+                const groupWeight = totalPortfolio ? groupValue / totalPortfolio : 0;
+                const isOpen = expanded[groupName] !== false;
+                return (
+                  <div key={groupName}>
+                    {groupBy !== "none" && (
+                      <button type="button" onClick={() => setExpanded((e) => ({ ...e, [groupName]: !isOpen }))}
+                        className="w-full flex items-center justify-between py-2 text-sm">
+                        <span className="flex items-center gap-1.5" style={{ color: t.text }}>
+                          {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                          {groupBy === "category" ? <CategoryBadge category={groupName} /> : <span className="font-semibold">{groupName}</span>}
+                          <span className="text-xs" style={{ color: t.textMuted }}>{rows.length}</span>
+                        </span>
+                        <span className="text-xs" style={{ color: t.textMuted, ...NUM }}>{fmtEUR(groupValue)} · {(groupWeight * 100).toFixed(1)} %</span>
+                      </button>
+                    )}
+                    {isOpen && (
+                      <div className="space-y-2">
+                        {rows.map((p) => (
+                          <div key={p.id} className="rounded-xl p-3" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="font-semibold text-sm" style={{ color: t.text }}>{p.ticker}</div>
+                                <div className="text-xs truncate" style={{ color: t.textMuted }}>{p.name}</div>
+                              </div>
+                              <div className="text-right shrink-0">
+                                <div className="font-semibold text-sm" style={{ color: t.text, ...NUM }}>{fmtEUR(p.value)}</div>
+                                <div className="text-xs" style={{ color: p.pnl >= 0 ? t.gain : t.loss, ...NUM }}>
+                                  {p.pnl >= 0 ? "▲" : "▼"} {fmtEUR(p.pnl)} ({fmtPct(p.pnlPct)})
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex items-center justify-between mt-2 text-xs" style={{ color: t.textMuted, ...NUM }}>
+                              <span>{p.quantity} × {fmtEURcents(p.lastPrice)} · PRU {fmtEURcents(p.costBasis)}</span>
+                              <span>{(p.weight * 100).toFixed(1)} %</span>
+                            </div>
+                            <div className="flex gap-2 mt-2">
+                              <select value={p.category} onChange={(e) => onUpdate?.(p.id, { category: e.target.value })}
+                                className="flex-1 min-w-0 text-xs rounded-lg px-2 py-2"
+                                style={{ background: t.panel, color: t.text, border: `1px solid ${t.border}` }}>
+                                {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+                              </select>
+                              <input type="text" value={p.sector} onChange={(e) => onUpdate?.(p.id, { sector: e.target.value })}
+                                placeholder="Secteur" className="flex-1 min-w-0 text-xs rounded-lg px-2 py-2"
+                                style={{ background: t.panel, color: t.text, border: `1px solid ${t.border}` }} />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {!isMobile && (
           <div className="overflow-x-auto">
             <table className="w-full text-sm" style={{ fontFamily: "ui-monospace, monospace" }}>
               <thead>
@@ -1220,6 +1317,7 @@
               </tbody>
             </table>
           </div>
+          )}
         </div>
       );
     }
@@ -1359,6 +1457,7 @@
 
    function TransfersTab({ transfers, onAdd, onValidate, onUnlink, recurring, onAddRecurring, onToggleRecurring, onDeleteRecurring }) {
       const t = useTheme();
+      const isMobile = useIsMobile();
       const [sourceAccountId, setSourceAccountId] = useState("externe");
       const [destinationAccountId, setDestinationAccountId] = useState(accounts[0].id);
       const [label, setLabel] = useState("");
@@ -1440,6 +1539,50 @@
             {error && <p className="text-xs mt-2" style={{ color: t.loss }}>{error}</p>}
           </div>
 
+          {isMobile && (
+            <div className="space-y-2">
+              {sorted.length === 0 && <p className="text-xs" style={{ color: t.textMuted }}>Aucun virement saisi.</p>}
+              {sorted.map((tr) => (
+                <div key={tr.id} className="rounded-xl p-3" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold flex items-center gap-1" style={{ color: t.text }}>
+                        {tr.recurringId && <RefreshCw size={11} style={{ color: t.textMuted }} />}{tr.label}
+                      </div>
+                      <div className="text-xs" style={{ color: t.textMuted }}>
+                        {transferAccountName(tr.sourceAccountId)} → {transferAccountName(tr.destinationAccountId)}
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="text-sm font-semibold" style={{ color: t.text, ...NUM }}>{fmtEUR(tr.amount)}</div>
+                      <div className="mt-1"><StatusBadge status={tr.status} /></div>
+                    </div>
+                  </div>
+                  <div className="text-xs mt-2" style={{ color: t.textMuted }}>
+                    Départ {fmtDate(tr.departureDate)}{tr.arrivalDate ? ` · arrivée ${fmtDate(tr.arrivalDate)}` : ""}
+                    {tr.status === "valide" && (tr.consumedMonthly ? " · inclus dans un point mensuel" : " · en attente du point mensuel")}
+                  </div>
+                  {tr.status === "attente" && (
+                    <div className="flex items-center gap-2 mt-2">
+                      <input type="date" value={arrivalDrafts[tr.id] || new Date().toISOString().slice(0, 10)}
+                        onChange={(e) => setArrivalDrafts((d) => ({ ...d, [tr.id]: e.target.value }))}
+                        className="flex-1 rounded-lg px-2 py-2 text-xs" style={{ background: t.panel, color: t.text, border: `1px solid ${t.border}` }} />
+                      <button onClick={() => onValidate(tr.id, new Date(arrivalDrafts[tr.id] || Date.now()).toISOString())}
+                        className="flex items-center gap-1 text-xs px-3 py-2 rounded-lg"
+                        style={{ background: `${t.gain}22`, color: t.gain, border: `1px solid ${t.gain}55` }}>
+                        <Check size={12} /> Reçu
+                      </button>
+                    </div>
+                  )}
+                  {tr.status === "valide" && tr.consumedMonthly && (
+                    <button onClick={() => onUnlink(tr.id)} className="text-xs px-3 py-2 rounded-lg mt-2"
+                      style={{ border: `1px solid ${t.border}`, color: t.textMuted }}>Rendre disponible</button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {!isMobile && (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -1507,6 +1650,7 @@
               </tbody>
             </table>
           </div>
+          )}
         </div>
       );
     }
@@ -1722,9 +1866,9 @@
       };
 
       return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.55)" }} onClick={onClose}>
+        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center md:p-4" style={{ background: "rgba(0,0,0,0.55)" }} onClick={onClose}>
           <div
-            className="w-full max-w-lg rounded-lg p-6 max-h-[90vh] overflow-y-auto"
+            className="w-full max-w-lg rounded-t-3xl md:rounded-2xl p-5 md:p-6 max-h-[92vh] md:max-h-[90vh] overflow-y-auto"
             style={{ background: t.panel, border: `1px solid ${t.border}` }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -1788,8 +1932,8 @@
 
             <button
               onClick={handleSave}
-              className="w-full mt-4 rounded py-2 text-sm"
-              style={{ background: t.accent, color: t.onAccent }}
+              className="w-full mt-4 rounded-xl py-3 text-sm font-semibold sticky bottom-0"
+              style={{ background: t.accent, color: t.onAccent, boxShadow: `0 -8px 20px ${t.panel}` }}
             >
               Enregistrer le point mensuel
             </button>
@@ -1854,8 +1998,86 @@
       );
     }
 
+    function MobileHistoryCard({ row: r, prev, periode, doublon, onValue, onFlow, onDate, onPeriode, onDelete }) {
+      const t = useTheme();
+      const [open, setOpen] = useState(false);
+      const variation = prev ? r.totalWealth - prev.totalWealth : null;
+      const totalMouvement = Object.values(r.flows || {}).reduce((s, v) => s + (Number(v) || 0), 0);
+      const gainPlacement = prev ? variation - totalMouvement : null;
+      const field = { background: t.panel, color: t.text, border: `1px solid ${t.border}`, ...NUM };
+      const tone = (v) => (v === null ? t.textMuted : v >= 0 ? t.gain : t.loss);
+      return (
+        <div className="rounded-xl" style={{ background: t.panelAlt, border: `1px solid ${doublon ? t.accent : t.border}` }}>
+          <button type="button" onClick={() => setOpen((o) => !o)} className="w-full text-left p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold capitalize" style={{ color: t.text }}>
+                  {periodeDate(periode).toLocaleDateString("fr-FR", { month: "long", year: "numeric" })}
+                </div>
+                <div className="text-xs" style={{ color: t.textMuted }}>relevé du {new Date(r.date).toLocaleDateString("fr-FR")}</div>
+              </div>
+              <div className="text-right">
+                <div className="text-sm font-semibold" style={{ color: t.text, ...NUM }}>{fmtEUR(r.totalWealth)}</div>
+                <div className="text-xs" style={{ color: tone(variation), ...NUM }}>{variation === null ? "—" : signed(variation)}</div>
+              </div>
+            </div>
+            {gainPlacement !== null && (
+              <div className="flex justify-between text-xs mt-1.5" style={{ color: t.textMuted }}>
+                <span>Placement <span style={{ color: tone(gainPlacement), ...NUM }}>{signed(gainPlacement)}</span></span>
+                <span>Mouvements <span style={{ color: t.text, ...NUM }}>{signed(totalMouvement)}</span></span>
+              </div>
+            )}
+            {r.warning && (
+              <div className="mt-2 rounded-lg px-2 py-1.5 text-xs" style={{ color: t.text, background: `${t.warning}1f`, border: `1px solid ${t.warning}66` }}>
+                <span style={{ color: t.warning }}>⚠</span> {r.warning}
+              </div>
+            )}
+            <div className="flex items-center gap-1 mt-2 text-xs" style={{ color: t.accent }}>
+              {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />} {open ? "Fermer" : "Détail et correction"}
+            </div>
+          </button>
+          {open && (
+            <div className="px-3 pb-3 space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <label className="text-xs" style={{ color: t.textMuted }}>Mois comptable
+                  <input type="month" value={periode} onChange={(e) => onPeriode(e.target.value)} className="w-full mt-1 rounded-lg px-2 py-2 text-sm" style={field} />
+                </label>
+                <label className="text-xs" style={{ color: t.textMuted }}>Date du relevé
+                  <input type="date" value={r.date.slice(0, 10)} onChange={(e) => onDate(e.target.value)} className="w-full mt-1 rounded-lg px-2 py-2 text-sm" style={field} />
+                </label>
+              </div>
+              <div className="grid grid-cols-[1fr_104px_92px] gap-x-2 text-[11px] pt-1" style={{ color: t.textMuted }}>
+                <span>Compte</span><span className="text-right">Valeur</span><span className="text-right">Mouvement</span>
+              </div>
+              {accounts.map((a) => {
+                const val = r.byAccount[a.id] ?? 0;
+                const mvt = r.flows?.[a.id] ?? 0;
+                const gain = prev ? val - (prev.byAccount[a.id] ?? 0) - mvt : null;
+                return (
+                  <div key={a.id} className="grid grid-cols-[1fr_104px_92px] gap-x-2 items-center">
+                    <div className="min-w-0">
+                      <div className="text-xs truncate" style={{ color: t.text }}>{a.name}</div>
+                      {gain !== null && gain !== 0 && <div className="text-[10px]" style={{ color: tone(gain), ...NUM }}>{gain >= 0 ? "+" : ""}{Math.round(gain)}</div>}
+                    </div>
+                    <input type="number" inputMode="decimal" value={val} onChange={(e) => onValue(a.id, e.target.value)}
+                      className="w-full rounded-lg px-2 py-2 text-xs text-right" style={field} />
+                    <input type="number" value={mvt} onChange={(e) => onFlow(a.id, e.target.value)}
+                      className="w-full rounded-lg px-2 py-2 text-xs text-right" style={{ ...field, background: "transparent", color: t.textMuted }} />
+                  </div>
+                );
+              })}
+              <div className="flex justify-end pt-1">
+                <DeleteButton title="Supprimer ce relevé (double appui)" onConfirm={onDelete} />
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
     function HistoryTab({ monthly, setMonthly }) {
       const t = useTheme();
+      const isMobile = useIsMobile();
       const scrollRef = useRef(null);
       const sorted = useMemo(
         () => [...monthly].sort((a, b) => (a.periode || periodeFromDate(a.date)).localeCompare(b.periode || periodeFromDate(b.date)) || new Date(a.date) - new Date(b.date)),
@@ -1927,6 +2149,21 @@
       const deleteRow = (id) => setMonthly((rows) => rows.filter((r) => r.id !== id));
       const cellStyle = { background: t.panelAlt, color: t.text, border: `1px solid ${t.border}`, fontFamily: "ui-monospace, monospace" };
       const flowStyle = { ...cellStyle, background: t.panel, color: t.textMuted };
+
+      if (isMobile) {
+        return (
+          <div className="space-y-2">
+            {displayed.map(({ row: r, prev }) => {
+              const periode = r.periode || periodeFromDate(r.date);
+              return (
+                <MobileHistoryCard key={r.id} row={r} prev={prev} periode={periode} doublon={periodeCounts[periode] > 1}
+                  onValue={(acc, v) => updateValue(r.id, acc, v)} onFlow={(acc, v) => updateFlow(r.id, acc, v)}
+                  onDate={(d) => updateDate(r.id, d)} onPeriode={(pp) => updatePeriode(r.id, pp)} onDelete={() => deleteRow(r.id)} />
+              );
+            })}
+          </div>
+        );
+      }
 
       return (
         <div>
@@ -2062,6 +2299,11 @@
       const [monthlyModalOpen, setMonthlyModalOpen] = useState(false);
       const [monthlyModalKey, setMonthlyModalKey] = useState(0);
       const [tab, setTab] = useState("dashboard");
+      const isMobile = useIsMobile();
+      const [menuOpen, setMenuOpen] = useState(false);
+      const [monthlyRange, setMonthlyRange] = useState(() => (window.matchMedia(MOBILE_QUERY).matches ? 12 : 0));
+      const goTab = (id) => { setTab(id); setMenuOpen(false); window.scrollTo({ top: 0 }); };
+      const openMonthlyModal = () => { setMonthlyModalKey((k) => k + 1); setMonthlyModalOpen(true); };
 
       // Persistance Firebase
       const [loaded, setLoaded] = useState(false);
@@ -2286,10 +2528,10 @@
         : 0;
 
       const NAV_ITEMS = [
-        { id: "dashboard", label: "Tableau de bord" },
-        { id: "positions", label: "Positions" },
-        { id: "virements", label: "Virements" },
-        { id: "historique", label: "Historique" },
+        { id: "dashboard", label: "Tableau de bord", short: "Accueil", icon: LayoutDashboard },
+        { id: "positions", label: "Positions", short: "Positions", icon: Briefcase },
+        { id: "virements", label: "Virements", short: "Virements", icon: ArrowLeftRight },
+        { id: "historique", label: "Historique", short: "Historique", icon: History },
       ];
 
       const handleLogout = () => {
@@ -2307,25 +2549,55 @@
       return (
         <ThemeCtx.Provider value={t}>
           <div className="min-h-screen w-full" style={{ background: t.bg }}>
-            <div className="sticky top-0 z-40" style={{ background: `${t.bg}d9`, backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", borderBottom: `1px solid ${t.border}` }}>
-              <div className="max-w-6xl mx-auto px-4 md:px-6 py-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <span className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: `linear-gradient(135deg, ${t.s1}, ${t.s7})` }}>
-                      <Wallet size={20} color="#ffffff" />
+            <div className="sticky top-0 z-40" style={{ background: `${t.bg}d9`, backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", borderBottom: `1px solid ${t.border}`, paddingTop: "env(safe-area-inset-top)" }}>
+              <div className="max-w-6xl mx-auto px-4 md:px-6 py-3 md:py-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="w-9 h-9 md:w-10 md:h-10 shrink-0 rounded-xl flex items-center justify-center" style={{ background: `linear-gradient(135deg, ${t.s1}, ${t.s7})` }}>
+                      <Wallet size={18} color="#ffffff" />
                     </span>
-                    <div>
+                    <div className="min-w-0">
                       <h1 className="text-base font-semibold tracking-tight" style={{ color: t.text }}>Mon patrimoine</h1>
-                      <p className="text-xs" style={{ color: t.textMuted }}>
-                        Dernier relevé le {new Date(lastMonthly.date).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}
-                        {" · "}
-                        {saveStatus === "saving" && "Enregistrement…"}
-                        {saveStatus === "saved" && lastSaved && `Sauvegardé à ${lastSaved.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`}
-                        {saveStatus === "erreur" && <span style={{ color: t.loss }}>Échec de la sauvegarde</span>}
+                      <p className="text-xs truncate" style={{ color: t.textMuted }}>
+                        {isMobile ? "Relevé du " : "Dernier relevé le "}
+                        {new Date(lastMonthly.date).toLocaleDateString("fr-FR", isMobile ? { day: "numeric", month: "short", year: "numeric" } : { day: "numeric", month: "long", year: "numeric" })}
+                        {saveStatus === "saving" && " · Enregistrement…"}
+                        {saveStatus === "saved" && lastSaved && ` · ${isMobile ? "" : "Sauvegardé à "}${lastSaved.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`}
+                        {saveStatus === "erreur" && <span style={{ color: t.loss }}> · Échec de la sauvegarde</span>}
                       </p>
                     </div>
                   </div>
 
+                  {isMobile ? (
+                    <div className="flex items-center gap-1 relative">
+                      <button onClick={() => setThemeName((n) => (n === "dark" ? "light" : "dark"))} title="Changer de thème" className="p-2.5 rounded-xl" style={{ color: t.textMuted }}>
+                        {themeName === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+                      </button>
+                      <button onClick={() => setMenuOpen((o) => !o)} title="Plus d'actions" className="p-2.5 rounded-xl" style={{ color: t.text, background: menuOpen ? t.panelAlt : "transparent" }}>
+                        <MoreHorizontal size={18} />
+                      </button>
+                      {menuOpen && (
+                        <>
+                          <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
+                          <div className="absolute right-0 top-12 z-50 w-60 rounded-2xl p-1.5" style={{ background: t.panel, border: `1px solid ${t.border}`, boxShadow: t.shadow }}>
+                            <button onClick={() => { handleExport(); setMenuOpen(false); }} className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm text-left" style={{ color: t.text }}>
+                              <Download size={16} /> Télécharger une sauvegarde
+                            </button>
+                            <label className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm cursor-pointer" style={{ color: t.text }}>
+                              <Upload size={16} /> Restaurer une sauvegarde
+                              <input type="file" accept="application/json" className="hidden"
+                                onChange={(e) => { e.target.files[0] && handleImportFile(e.target.files[0]); setMenuOpen(false); }} />
+                            </label>
+                            <div className="px-3 py-2"><ResetButton onConfirm={() => { handleReset(); setMenuOpen(false); }} /></div>
+                            <div className="my-1" style={{ borderTop: `1px solid ${t.border}` }} />
+                            <button onClick={handleLogout} className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm text-left" style={{ color: t.loss }}>
+                              <LogOut size={16} /> Se déconnecter
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ) : (
                   <div className="flex items-center gap-1.5">
                     <ResetButton onConfirm={handleReset} />
                     <button onClick={handleExport} title="Télécharger une sauvegarde JSON" className="p-2 rounded-lg transition-colors" style={{ color: t.textMuted }}>
@@ -2343,20 +2615,22 @@
                       <LogOut size={16} />
                     </button>
                     <button
-                      onClick={() => { setMonthlyModalKey((k) => k + 1); setMonthlyModalOpen(true); }}
+                      onClick={openMonthlyModal}
                       className="flex items-center gap-1.5 pl-3 pr-4 py-2 rounded-xl text-sm font-medium ml-1"
                       style={{ background: t.accent, color: t.onAccent, boxShadow: `0 4px 14px ${t.accent}55` }}
                     >
-                      <Plus size={15} /> <span className="whitespace-nowrap">Point<span className="hidden sm:inline"> mensuel</span></span>
+                      <Plus size={15} /> Point mensuel
                     </button>
                   </div>
+                  )}
                 </div>
-                  <div className="flex items-center gap-1 p-1 rounded-xl mt-4 w-full sm:w-fit overflow-x-auto" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
+                {!isMobile && (
+                  <div className="flex items-center gap-1 p-1 rounded-xl mt-4 w-fit" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
                     {NAV_ITEMS.map((n) => (
                       <button
                         key={n.id}
-                        onClick={() => setTab(n.id)}
-                        className="flex-1 sm:flex-none whitespace-nowrap px-3 md:px-4 py-1.5 text-sm rounded-lg transition-all"
+                        onClick={() => goTab(n.id)}
+                        className="whitespace-nowrap px-4 py-1.5 text-sm rounded-lg transition-all"
                         style={{
                           color: tab === n.id ? t.text : t.textMuted,
                           background: tab === n.id ? t.panel : "transparent",
@@ -2368,15 +2642,16 @@
                       </button>
                     ))}
                   </div>
+                )}
               </div>
             </div>
 
-            <div className="max-w-6xl mx-auto px-4 md:px-6 py-6 md:py-8" style={{ fontFamily: FONT }}>
+            <div className="max-w-6xl mx-auto px-3 md:px-6 pt-4 md:py-8 pb-32 md:pb-8" style={{ fontFamily: FONT }}>
               {tab === "dashboard" && (
-                <div className="space-y-5">
+                <div className="space-y-3 md:space-y-5">
                   <WarningsPanel items={monthlyWarnings} onOpen={() => setTab("historique")} />
 
-                  <div className="rounded-2xl p-5 md:p-7" style={{ background: t.panel, border: `1px solid ${t.border}`, boxShadow: t.shadow }}>
+                  <div className="rounded-2xl p-4 md:p-7" style={{ background: t.panel, border: `1px solid ${t.border}`, boxShadow: t.shadow }}>
                     <div className="flex flex-wrap items-end justify-between gap-4 mb-4">
                       <div>
                         <div className="text-sm font-medium" style={{ color: t.textMuted }}>Patrimoine total</div>
@@ -2393,19 +2668,29 @@
                     <WealthChart data={monthlyMetrics} />
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
                     <KPICard icon={TrendingUp} label="Gain lié aux placements" value={fmtEUR(cumGain)}
-                      sub={`${fmtPct(cumGainPct)} du capital investi (${fmtEUR(investedNow)})`} tone={cumGain >= 0 ? "up" : "down"} />
+                      sub={isMobile ? `${fmtPct(cumGainPct)} du capital investi` : `${fmtPct(cumGainPct)} du capital investi (${fmtEUR(investedNow)})`} tone={cumGain >= 0 ? "up" : "down"} />
                     <KPICard icon={PiggyBank} label="Épargne cumulée" value={fmtEUR(cumSavings)}
                       sub="Versements + variation de trésorerie" />
                     <KPICard icon={Percent} label="Gain placement moyen / an" value={fmtEUR(avgAnnualGainPlacement)}
-                      sub={`Ramené à 12 mois (sur ${monthsTracked} mois)`} />
+                      sub={isMobile ? `Sur ${monthsTracked} mois` : `Ramené à 12 mois (sur ${monthsTracked} mois)`} />
                     <KPICard icon={PiggyBank} label="Épargne moyenne / an" value={fmtEUR(avgAnnualGainEpargne)}
-                      sub={`Ramené à 12 mois (sur ${monthsTracked} mois)`} />
+                      sub={isMobile ? `Sur ${monthsTracked} mois` : `Ramené à 12 mois (sur ${monthsTracked} mois)`} />
                   </div>
 
-                  <Panel title="Évolution mensuelle" subtitle="Ce que vous avez épargné et ce que vos placements ont rapporté, mois par mois">
-                    <MonthlyEvolutionChart data={monthlyMetrics} />
+                  <Panel title="Évolution mensuelle" subtitle="Ce que vous avez épargné et ce que vos placements ont rapporté, mois par mois"
+                    action={
+                      <div className="flex shrink-0 p-0.5 rounded-lg text-xs" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
+                        {[[12, "12 mois"], [0, "Tout"]].map(([v, label]) => (
+                          <button key={v} onClick={() => setMonthlyRange(v)} className="px-2.5 py-1 rounded-md"
+                            style={{ background: monthlyRange === v ? t.panel : "transparent", color: monthlyRange === v ? t.text : t.textMuted, fontWeight: monthlyRange === v ? 600 : 400 }}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    }>
+                    <MonthlyEvolutionChart data={monthlyRange ? monthlyMetrics.slice(-(monthlyRange + 1)) : monthlyMetrics} />
                   </Panel>
 
                   <Panel title="Bilan annuel" subtitle="Épargne, gain de placement et variation du patrimoine par année">
@@ -2483,7 +2768,7 @@
               )}
 
               {tab === "historique" && (
-                <div className="space-y-6">
+                <div className="space-y-3 md:space-y-6">
                   <WarningsPanel items={monthlyWarnings} />
                   <Panel title="Relevés mensuels" subtitle="Correction manuelle des valeurs et des mouvements">
                     <HistoryTab monthly={monthly} setMonthly={setMonthly} />
@@ -2492,6 +2777,35 @@
               )}
             </div>
           </div>
+
+          {isMobile && (
+            <>
+              <button onClick={openMonthlyModal} title="Nouveau point mensuel"
+                className="fixed right-4 z-40 w-14 h-14 rounded-2xl flex items-center justify-center"
+                style={{ bottom: "calc(76px + env(safe-area-inset-bottom))", background: t.accent, color: t.onAccent, boxShadow: `0 8px 24px ${t.accent}66` }}>
+                <Plus size={24} />
+              </button>
+              <nav className="fixed bottom-0 inset-x-0 z-40 grid grid-cols-4"
+                style={{ background: `${t.panel}f2`, backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", borderTop: `1px solid ${t.border}`, paddingBottom: "env(safe-area-inset-bottom)" }}>
+                {NAV_ITEMS.map((n) => {
+                  const Icon = n.icon;
+                  const active = tab === n.id;
+                  return (
+                    <button key={n.id} onClick={() => goTab(n.id)} className="flex flex-col items-center gap-1 pt-2.5 pb-2 text-[11px]"
+                      style={{ color: active ? t.accent : t.textMuted, fontWeight: active ? 600 : 400 }}>
+                      <span className="relative flex items-center justify-center w-12 h-7 rounded-full" style={{ background: active ? `${t.accent}1f` : "transparent" }}>
+                        <Icon size={19} />
+                        {n.id === "historique" && monthlyWarnings.length > 0 && (
+                          <span className="absolute -top-0.5 right-1.5 w-2 h-2 rounded-full" style={{ background: t.warning }} />
+                        )}
+                      </span>
+                      {n.short}
+                    </button>
+                  );
+                })}
+              </nav>
+            </>
+          )}
 
           <MonthlySnapshotModal
             key={monthlyModalKey}
