@@ -112,6 +112,18 @@
       return (byAccount.lcl || 0) + (byAccount.revolut || 0);
     }
 
+    // Décompose la variation entre deux relevés, avec la même règle que le tableau de bord :
+    // gain lié aux revenus = versements nets vers les placements + variation de trésorerie (LCL + Revolut)
+    function splitVariation(prev, snap, allFlows) {
+      const variation = snap.totalWealth - prev.totalWealth;
+      const versements = allFlows
+        .filter((f) => f.date > prev.date && f.date <= snap.date && !CASH_ACCOUNTS.includes(f.accountId))
+        .reduce((s, f) => s + f.amount, 0);
+      const cash = cashBuffer(snap.byAccount || {}) - cashBuffer(prev.byAccount || {});
+      const gainRevenus = versements + cash;
+      return { variation, versements, cash, gainRevenus, gainPlacement: variation - gainRevenus };
+    }
+
     function buildMonthlyMetrics(monthlySnapshots, allFlows) {
       const resampled = resampleToMonthly(monthlySnapshots);
       const decomposition = buildWealthDecomposition(resampled, allFlows);
@@ -128,7 +140,8 @@
           savings,
           cash,
           gain: gainRaw - cash,
-          epargne: savings + cash,
+          // Gain lié aux revenus = variation du patrimoine - gain de placement (salaires et autres rentrées - dépenses)
+          gainRevenus: savings + cash,
           monthChange: savings + cash + (gainRaw - cash),
         };
       });
@@ -138,12 +151,12 @@
       const byYear = new Map();
       monthlyMetrics.forEach((m) => {
         const y = Number(m.periode.slice(0, 4));
-        if (!byYear.has(y)) byYear.set(y, { year: y, savings: 0, cash: 0, gain: 0, epargne: 0, endWealth: 0 });
+        if (!byYear.has(y)) byYear.set(y, { year: y, savings: 0, cash: 0, gain: 0, gainRevenus: 0, endWealth: 0 });
         const acc = byYear.get(y);
         acc.savings += m.savings;
         acc.cash += m.cash;
         acc.gain += m.gain;
-        acc.epargne += m.epargne;
+        acc.gainRevenus += m.gainRevenus;
         acc.endWealth = m.wealth; 
       });
       
@@ -723,12 +736,12 @@
       const chartData = data.slice(1).map((m) => ({
         ...m,
         labelY: m.monthChange >= 0
-          ? Math.max(m.epargne, 0) + Math.max(m.gain, 0)
-          : Math.min(m.epargne, 0) + Math.min(m.gain, 0),
+          ? Math.max(m.gainRevenus, 0) + Math.max(m.gain, 0)
+          : Math.min(m.gainRevenus, 0) + Math.min(m.gain, 0),
       }));
       return (
         <div>
-          <ChartLegend items={[{ label: "Épargne (versements + trésorerie)", color: t.capital }, { label: "Placement", color: t.placement }]} />
+          <ChartLegend items={[{ label: "Gain lié aux revenus (revenus − dépenses)", color: t.capital }, { label: "Gain sur placements", color: t.placement }]} />
           <ResponsiveContainer width="100%" height={isMobile ? 260 : 340}>
             <ComposedChart data={chartData} stackOffset="sign" margin={{ top: 20, right: 8, left: 0, bottom: 0 }} barCategoryGap="25%">
               <CartesianGrid stroke={t.border} vertical={false} />
@@ -754,11 +767,11 @@
                         {periodeDate(p.periode).toLocaleDateString("fr-FR", { month: "long", year: "numeric" })}
                       </div>
                       <div style={{ color: t.textMuted, fontSize: 11 }}>relevé du {new Date(p.date).toLocaleDateString("fr-FR")}</div>
-                      {row("Épargne", p.epargne, t.capital)}
+                      {row("Gain lié aux revenus", p.gainRevenus, t.capital)}
                       <div className="pl-3.5 text-[11px]" style={{ color: t.textMuted }}>
-                        dont versé {signed(p.savings)} · trésorerie {signed(p.cash)}
+                        épargne versée {signed(p.savings)} · trésorerie {signed(p.cash)}
                       </div>
-                      {row("Placement", p.gain, t.placement)}
+                      {row("Gain sur placements", p.gain, t.placement)}
                       <div className="pt-1 mt-1 space-y-1" style={{ borderTop: `1px solid ${t.border}` }}>
                         {row("Variation du mois", p.monthChange)}
                         <div className="flex justify-between gap-4">
@@ -770,7 +783,7 @@
                   );
                 }}
               />
-              <Bar dataKey="epargne" stackId="month" fill={t.capital} stroke={t.panel} strokeWidth={1} radius={[3, 3, 3, 3]} maxBarSize={22} />
+              <Bar dataKey="gainRevenus" stackId="month" fill={t.capital} stroke={t.panel} strokeWidth={1} radius={[3, 3, 3, 3]} maxBarSize={22} />
               <Bar dataKey="gain" stackId="month" fill={t.placement} stroke={t.panel} strokeWidth={1} radius={[3, 3, 3, 3]} maxBarSize={22} />
               <Line dataKey="labelY" stroke="none" legendType="none" isAnimationActive={false} activeDot={false}
                 dot={(props) => {
@@ -796,9 +809,9 @@
       const isMobile = useIsMobile();
       return (
         <div>
-          <ChartLegend items={[{ label: "Épargne (versements + trésorerie)", color: t.capital }, { label: "Placement", color: t.placement }]} />
+          <ChartLegend items={[{ label: "Gain lié aux revenus (revenus − dépenses)", color: t.capital }, { label: "Gain sur placements", color: t.placement }]} />
           <ResponsiveContainer width="100%" height={isMobile ? 240 : 300}>
-            <ComposedChart data={data.map((y) => ({ ...y, labelY: y.wealthChange >= 0 ? Math.max(y.epargne, 0) + Math.max(y.gain, 0) : Math.min(y.epargne, 0) + Math.min(y.gain, 0) }))}
+            <ComposedChart data={data.map((y) => ({ ...y, labelY: y.wealthChange >= 0 ? Math.max(y.gainRevenus, 0) + Math.max(y.gain, 0) : Math.min(y.gainRevenus, 0) + Math.min(y.gain, 0) }))}
               stackOffset="sign" margin={{ top: 26, right: 8, left: 0, bottom: 0 }} barCategoryGap="35%">
               <CartesianGrid stroke={t.border} vertical={false} />
               <XAxis dataKey="year" tick={{ fill: t.textMuted, fontSize: 12 }} axisLine={false} tickLine={false} />
@@ -806,14 +819,33 @@
               <ReferenceLine y={0} stroke={t.textMuted} strokeOpacity={0.6} />
               <Tooltip
                 cursor={{ fill: t.panelAlt }}
-                contentStyle={tooltipStyle(t)}
-                formatter={(v, name) => [signed(v), name === "epargne" ? "Épargne" : "Placement"]}
-                labelFormatter={(year, payload) => {
-                  const total = payload?.[0]?.payload?.wealthChange;
-                  return `${year} — variation ${total !== undefined ? signed(total) : ""}`;
+                content={({ active, payload }) => {
+                  if (!active || !payload?.length) return null;
+                  const p = payload[0].payload;
+                  const row = (label, v, color) => (
+                    <div className="flex justify-between items-center gap-4">
+                      <span className="flex items-center gap-1.5" style={{ color: t.textMuted }}>
+                        {color && <span className="w-2 h-2 rounded-sm" style={{ background: color }} />}{label}
+                      </span>
+                      <span style={{ color: t.text, ...NUM }}>{signed(v)}</span>
+                    </div>
+                  );
+                  return (
+                    <div className="space-y-1 text-xs" style={{ ...tooltipStyle(t), minWidth: 240 }}>
+                      <div className="font-semibold" style={{ color: t.text }}>{p.year}</div>
+                      {row("Gain lié aux revenus", p.gainRevenus, t.capital)}
+                      <div className="pl-3.5 text-[11px]" style={{ color: t.textMuted }}>
+                        épargne versée {signed(p.savings)} · trésorerie {signed(p.cash)}
+                      </div>
+                      {row("Gain sur placements", p.gain, t.placement)}
+                      <div className="pt-1 mt-1" style={{ borderTop: `1px solid ${t.border}` }}>
+                        {row("Variation du patrimoine", p.wealthChange)}
+                      </div>
+                    </div>
+                  );
                 }}
               />
-              <Bar dataKey="epargne" stackId="year" fill={t.capital} stroke={t.panel} strokeWidth={2} radius={[4, 4, 4, 4]} maxBarSize={64} />
+              <Bar dataKey="gainRevenus" stackId="year" fill={t.capital} stroke={t.panel} strokeWidth={2} radius={[4, 4, 4, 4]} maxBarSize={64} />
               <Bar dataKey="gain" stackId="year" fill={t.placement} stroke={t.panel} strokeWidth={2} radius={[4, 4, 4, 4]} maxBarSize={64} />
               <Line dataKey="labelY" stroke="none" legendType="none" isAnimationActive={false} activeDot={false}
                 dot={(props) => {
@@ -829,6 +861,45 @@
               />
             </ComposedChart>
           </ResponsiveContainer>
+          <YearlyTable data={data} />
+        </div>
+      );
+    }
+
+    function YearlyTable({ data }) {
+      const t = useTheme();
+      const cell = (v, strong) => (
+        <td className="py-1.5 px-2 text-right" style={{ color: v >= 0 ? t.gain : t.loss, fontWeight: strong ? 600 : 400, ...NUM, whiteSpace: "nowrap" }}>{signed(v)}</td>
+      );
+      const head = (label, title) => (
+        <th className="text-right py-1.5 px-2 font-medium" title={title} style={{ color: t.textMuted, whiteSpace: "nowrap" }}>{label}</th>
+      );
+      return (
+        <div className="overflow-x-auto mt-4">
+          <table className="w-full text-xs" style={{ borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ borderBottom: `1px solid ${t.border}` }}>
+                <th className="text-left py-1.5 px-2 font-medium" style={{ color: t.textMuted }}>Année</th>
+                {head("Épargne versée", "Versements nets vers les placements (virements)")}
+                {head("Trésorerie", "Variation des comptes courants LCL + Revolut")}
+                {head("Gain revenus", "Évolution du patrimoine − gain sur placements = épargne versée + trésorerie")}
+                {head("Gain placements", "Performance des placements, hors versements")}
+                {head("Variation", "Évolution totale du patrimoine")}
+              </tr>
+            </thead>
+            <tbody>
+              {data.map((y) => (
+                <tr key={y.year} style={{ borderBottom: `1px solid ${t.border}` }}>
+                  <td className="py-1.5 px-2" style={{ color: t.text, fontWeight: 600 }}>{y.year}</td>
+                  {cell(y.savings)}
+                  {cell(y.cash)}
+                  {cell(y.gainRevenus, true)}
+                  {cell(y.gain, true)}
+                  {cell(y.wealthChange)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       );
     }
@@ -2005,12 +2076,11 @@
       );
     }
 
-    function MobileHistoryCard({ row: r, prev, periode, doublon, onValue, onFlow, onDate, onPeriode, onDelete }) {
+    function MobileHistoryCard({ row: r, prev, split, periode, doublon, onValue, onFlow, onDate, onPeriode, onDelete }) {
       const t = useTheme();
       const [open, setOpen] = useState(false);
-      const variation = prev ? r.totalWealth - prev.totalWealth : null;
-      const totalMouvement = Object.values(r.flows || {}).reduce((s, v) => s + (Number(v) || 0), 0);
-      const gainPlacement = prev ? variation - totalMouvement : null;
+      const variation = split ? split.variation : null;
+      const gainPlacement = split ? split.gainPlacement : null;
       const field = { background: t.panel, color: t.text, border: `1px solid ${t.border}`, ...NUM };
       const tone = (v) => (v === null ? t.textMuted : v >= 0 ? t.gain : t.loss);
       return (
@@ -2030,8 +2100,8 @@
             </div>
             {gainPlacement !== null && (
               <div className="flex justify-between text-xs mt-1.5" style={{ color: t.textMuted }}>
+                <span>Revenus <span style={{ color: tone(split.gainRevenus), ...NUM }}>{signed(split.gainRevenus)}</span></span>
                 <span>Placement <span style={{ color: tone(gainPlacement), ...NUM }}>{signed(gainPlacement)}</span></span>
-                <span>Mouvements <span style={{ color: t.text, ...NUM }}>{signed(totalMouvement)}</span></span>
               </div>
             )}
             {r.warning && (
@@ -2082,7 +2152,7 @@
       );
     }
 
-    function HistoryTab({ monthly, setMonthly }) {
+    function HistoryTab({ monthly, setMonthly, allFlows }) {
       const t = useTheme();
       const isMobile = useIsMobile();
       const scrollRef = useRef(null);
@@ -2091,8 +2161,11 @@
         [monthly]
       );
       const displayed = useMemo(
-        () => sorted.map((r, i) => ({ row: r, prev: i > 0 ? sorted[i - 1] : null })).reverse(),
-        [sorted]
+        () => sorted.map((r, i) => {
+          const prev = i > 0 ? sorted[i - 1] : null;
+          return { row: r, prev, split: prev ? splitVariation(prev, r, allFlows) : null };
+        }).reverse(),
+        [sorted, allFlows]
       );
 
       const periodeCounts = useMemo(() => {
@@ -2113,18 +2186,13 @@
         const map = new Map();
         let cum = 0;
         sorted.forEach((r, i) => {
-          if (i > 0) {
-            const prev = sorted[i - 1];
-            const variation = r.totalWealth - prev.totalWealth;
-            const totalMouvement = Object.values(r.flows || {}).reduce((s, v) => s + (Number(v) || 0), 0);
-            cum += variation - totalMouvement;
-          }
+          if (i > 0) cum += splitVariation(sorted[i - 1], r, allFlows).gainPlacement;
           map.set(r.id, cum);
         });
         return map;
-      }, [sorted]);
+      }, [sorted, allFlows]);
 
-      const cumGainEpargneById = useMemo(() => {
+      const cumGainRevenusById = useMemo(() => {
         const map = new Map();
         sorted.forEach((r) => map.set(r.id, (cumGainTotalById.get(r.id) || 0) - (cumGainPlacementById.get(r.id) || 0)));
         return map;
@@ -2160,10 +2228,10 @@
       if (isMobile) {
         return (
           <div className="space-y-2">
-            {displayed.map(({ row: r, prev }) => {
+            {displayed.map(({ row: r, prev, split }) => {
               const periode = r.periode || periodeFromDate(r.date);
               return (
-                <MobileHistoryCard key={r.id} row={r} prev={prev} periode={periode} doublon={periodeCounts[periode] > 1}
+                <MobileHistoryCard key={r.id} row={r} prev={prev} split={split} periode={periode} doublon={periodeCounts[periode] > 1}
                   onValue={(acc, v) => updateValue(r.id, acc, v)} onFlow={(acc, v) => updateFlow(r.id, acc, v)}
                   onDate={(d) => updateDate(r.id, d)} onPeriode={(pp) => updatePeriode(r.id, pp)} onDelete={() => deleteRow(r.id)} />
               );
@@ -2184,23 +2252,22 @@
                     <th key={a.id} className="text-right py-2 px-2" style={{ color: t.textMuted, whiteSpace: "nowrap" }}>{a.name}</th>
                   ))}
                   <th className="text-right py-2 px-2" style={{ color: t.textMuted }}>Total</th>
-                  <th className="text-right py-2 px-2" style={{ color: t.textMuted }}>Gain total</th>
-                  <th className="text-right py-2 px-2" style={{ color: t.textMuted }}>Gain placement</th>
-                  <th className="text-right py-2 px-2" style={{ color: t.textMuted }}>Gain épargne</th>
+                  <th className="text-right py-2 px-2" style={{ color: t.textMuted }} title="Variation du patrimoine depuis le relevé précédent">Gain total</th>
+                  <th className="text-right py-2 px-2" style={{ color: t.textMuted }} title="Variation − versements nets vers les placements − variation de trésorerie">Gain placement</th>
+                  <th className="text-right py-2 px-2" style={{ color: t.textMuted }} title="Évolution du patrimoine − gain sur placements (revenus − dépenses)">Gain revenus</th>
                   <th className="text-right py-2 px-2" style={{ color: t.textMuted }}>Gain cumulé</th>
                   <th className="text-right py-2 px-2" style={{ color: t.textMuted }}>Gain placement cumulé</th>
-                  <th className="text-right py-2 px-2" style={{ color: t.textMuted }}>Gain épargne cumulé</th>
+                  <th className="text-right py-2 px-2" style={{ color: t.textMuted }} title="Cumul du gain lié aux revenus">Gain revenus cumulé</th>
                   <th className="py-2 px-2" />
                 </tr>
               </thead>
               <tbody>
-                {displayed.map(({ row: r, prev }) => {
+                {displayed.map(({ row: r, split }) => {
                   const periode = r.periode || periodeFromDate(r.date);
                   const doublon = periodeCounts[periode] > 1;
-                  const variation = prev ? r.totalWealth - prev.totalWealth : null;
-                  const totalMouvement = Object.values(r.flows || {}).reduce((s, v) => s + (Number(v) || 0), 0);
-                  const gainPlacement = prev ? variation - totalMouvement : null;
-                  const gainEpargne = variation !== null && gainPlacement !== null ? variation - gainPlacement : null;
+                  const variation = split ? split.variation : null;
+                  const gainPlacement = split ? split.gainPlacement : null;
+                  const gainRevenus = split ? split.gainRevenus : null;
                   return (
                   <tr key={r.id} style={{ borderBottom: `1px solid ${t.border}` }}>
                     <td className="py-1 px-2 sticky left-0 z-10 align-top" style={{ background: t.panel }}>
@@ -2262,8 +2329,8 @@
                     <td className="py-1 px-2 text-right align-top" style={{ color: gainPlacement === null ? t.textMuted : gainPlacement >= 0 ? t.gain : t.loss, fontFamily: "ui-monospace, monospace" }}>
                       {gainPlacement === null ? "—" : `${gainPlacement >= 0 ? "+" : ""}${fmtEUR(gainPlacement)}`}
                     </td>
-                    <td className="py-1 px-2 text-right align-top" style={{ color: gainEpargne === null ? t.textMuted : gainEpargne >= 0 ? t.gain : t.loss, fontFamily: "ui-monospace, monospace" }}>
-                      {gainEpargne === null ? "—" : `${gainEpargne >= 0 ? "+" : ""}${fmtEUR(gainEpargne)}`}
+                    <td className="py-1 px-2 text-right align-top" style={{ color: gainRevenus === null ? t.textMuted : gainRevenus >= 0 ? t.gain : t.loss, fontFamily: "ui-monospace, monospace" }}>
+                      {gainRevenus === null ? "—" : `${gainRevenus >= 0 ? "+" : ""}${fmtEUR(gainRevenus)}`}
                     </td>
                     <td className="py-1 px-2 text-right align-top" style={{ color: (cumGainTotalById.get(r.id) || 0) >= 0 ? t.gain : t.loss, fontFamily: "ui-monospace, monospace" }}>
                       {(() => { const c = cumGainTotalById.get(r.id) || 0; return `${c >= 0 ? "+" : ""}${fmtEUR(c)}`; })()}
@@ -2271,8 +2338,8 @@
                     <td className="py-1 px-2 text-right align-top" style={{ color: (cumGainPlacementById.get(r.id) || 0) >= 0 ? t.gain : t.loss, fontFamily: "ui-monospace, monospace" }}>
                       {(() => { const c = cumGainPlacementById.get(r.id) || 0; return `${c >= 0 ? "+" : ""}${fmtEUR(c)}`; })()}
                     </td>
-                    <td className="py-1 px-2 text-right align-top" style={{ color: (cumGainEpargneById.get(r.id) || 0) >= 0 ? t.gain : t.loss, fontFamily: "ui-monospace, monospace" }}>
-                      {(() => { const c = cumGainEpargneById.get(r.id) || 0; return `${c >= 0 ? "+" : ""}${fmtEUR(c)}`; })()}
+                    <td className="py-1 px-2 text-right align-top" style={{ color: (cumGainRevenusById.get(r.id) || 0) >= 0 ? t.gain : t.loss, fontFamily: "ui-monospace, monospace" }}>
+                      {(() => { const c = cumGainRevenusById.get(r.id) || 0; return `${c >= 0 ? "+" : ""}${fmtEUR(c)}`; })()}
                     </td>
                     <td className="py-1 px-2 align-top">
                       <DeleteButton title="Supprimer ce point (double clic)" onConfirm={() => deleteRow(r.id)} />
@@ -2308,8 +2375,8 @@ Méthode de calcul de l'application :
 - LCL et Revolut sont la trésorerie (comptes courants) ; leurs flux ne comptent pas comme versements.
 - Capital (par mois) = patrimoine du premier relevé + cumul des versements nets vers les comptes hors trésorerie.
 - Capital investi = capital - trésorerie du premier relevé.
-- Pour chaque mois : savings = variation du capital (versements nets) ; cash = variation de trésorerie (LCL + Revolut) ; épargne = savings + cash ; gain de placement = (variation de patrimoine - savings) - cash ; monthChange = épargne + gain = variation totale du patrimoine.
-- Gain lié aux placements = somme des gains mensuels ; Épargne cumulée = somme des épargnes mensuelles.
+- Pour chaque mois : savings = variation du capital (versements nets) ; cash = variation de trésorerie (LCL + Revolut) ; épargne versée = savings ; gainRevenus (gain lié aux revenus = revenus - dépenses) = savings + cash = variation de patrimoine - gain de placement ; gain de placement = (variation de patrimoine - savings) - cash ; monthChange = gainRevenus + gain = variation totale du patrimoine.
+- Gain lié aux placements = somme des gains mensuels ; Gain lié aux revenus cumulé = somme des gainRevenus mensuels ; Épargne versée cumulée = somme des versements mensuels.
 - Moyennes annuelles = cumul / nombre de mois suivis × 12.
 - Bilan annuel : rendement de l'année = gain de l'année / patrimoine en début d'année.
 - Les virements validés non rattachés à un relevé sont ajoutés aux flux.`;
@@ -2320,10 +2387,10 @@ Méthode de calcul de l'application :
       lines.push(`Date du jour : ${new Date().toISOString().slice(0, 10)}`);
       lines.push("\n## Chiffres clés affichés");
       for (const [k, v] of Object.entries(kpis)) lines.push(`- ${k} : ${v}`);
-      lines.push("\n## Métriques mensuelles (periode;patrimoine;capitalInvesti;versements;variationTresorerie;epargne;gainPlacement;variationTotale)");
-      monthlyMetrics.forEach((m) => lines.push([m.periode, m.wealth, m.invested, m.savings, m.cash, m.epargne, m.gain, m.monthChange].map(r).join(";")));
-      lines.push("\n## Bilan annuel (annee;patrimoineDebut;patrimoineFin;versements;variationTresorerie;epargne;gainPlacement;rendementPct)");
-      yearlyMetrics.forEach((y) => lines.push([y.year, y.startWealth, y.endWealth, y.savings, y.cash, y.epargne, y.gain, (y.yieldPct * 100).toFixed(2)].map(r).join(";")));
+      lines.push("\n## Métriques mensuelles (periode;patrimoine;capitalInvesti;versements;variationTresorerie;gainRevenus;gainPlacement;variationTotale)");
+      monthlyMetrics.forEach((m) => lines.push([m.periode, m.wealth, m.invested, m.savings, m.cash, m.gainRevenus, m.gain, m.monthChange].map(r).join(";")));
+      lines.push("\n## Bilan annuel (annee;patrimoineDebut;patrimoineFin;versements;variationTresorerie;gainRevenus;gainPlacement;rendementPct)");
+      yearlyMetrics.forEach((y) => lines.push([y.year, y.startWealth, y.endWealth, y.savings, y.cash, y.gainRevenus, y.gain, (y.yieldPct * 100).toFixed(2)].map(r).join(";")));
       lines.push("\n## Relevés mensuels bruts (valeurs par compte et flux du mois, en €)");
       monthlyEff.forEach((m) => {
         const vals = Object.entries(m.byAccount || {}).filter(([, v]) => v).map(([a, v]) => `${a}=${r(v)}`).join(" ");
@@ -2743,7 +2810,8 @@ Méthode de calcul de l'application :
         [monthly]
       );
       const lastMetric = monthlyMetrics[monthlyMetrics.length - 1];
-      const cumSavings = monthlyMetrics.reduce((s, m) => s + m.epargne, 0);
+      const cumGainRevenus = monthlyMetrics.reduce((s, m) => s + m.gainRevenus, 0);
+      const cumVersements = monthlyMetrics.reduce((s, m) => s + m.savings, 0);
       const cumGain = monthlyMetrics.reduce((s, m) => s + m.gain, 0);
       // Variation réelle du patrimoine vs le mois précédent (épargne, trésorerie comprise, + gain de placement)
       const totalWealthChange = lastMetric ? lastMetric.monthChange : 0;
@@ -2759,7 +2827,8 @@ Méthode de calcul de l'application :
         return (y1 - y0) * 12 + (m1 - m0);
       })();
       const avgAnnualGainPlacement = monthsTracked ? (cumGain / monthsTracked) * 12 : 0;
-      const avgAnnualGainEpargne = monthsTracked ? (cumSavings / monthsTracked) * 12 : 0;
+      const avgAnnualGainRevenus = monthsTracked ? (cumGainRevenus / monthsTracked) * 12 : 0;
+      const avgAnnualVersements = monthsTracked ? (cumVersements / monthsTracked) * 12 : 0;
 
       const yearlyYields = yearlyMetrics.filter(y => y.startWealth > 0);
       const avgYield = yearlyYields.length > 0 
@@ -2778,9 +2847,11 @@ Méthode de calcul de l'application :
           "Patrimoine total": fmtEUR(lastMonthly?.totalWealth),
           "Variation sur le dernier mois": `${fmtEUR(totalWealthChange)} (${fmtPct(lastMonthVariationPct)})`,
           "Gain lié aux placements": `${fmtEUR(cumGain)}, soit ${fmtPct(cumGainPct)} du capital investi (${fmtEUR(investedNow)})`,
-          "Épargne cumulée": fmtEUR(cumSavings),
+          "Gain lié aux revenus (revenus - dépenses)": fmtEUR(cumGainRevenus),
+          "Épargne versée cumulée": fmtEUR(cumVersements),
           "Gain placement moyen / an": `${fmtEUR(avgAnnualGainPlacement)} (sur ${monthsTracked} mois)`,
-          "Épargne moyenne / an": `${fmtEUR(avgAnnualGainEpargne)} (sur ${monthsTracked} mois)`,
+          "Gain revenus moyen / an": `${fmtEUR(avgAnnualGainRevenus)} (sur ${monthsTracked} mois)`,
+          "Épargne versée moyenne / an": `${fmtEUR(avgAnnualVersements)} (sur ${monthsTracked} mois)`,
           "Rendement annuel moyen": fmtPct(avgYield),
         },
       }), [monthlyEff, monthlyMetrics, yearlyMetrics, positions, transfers]);
@@ -2938,18 +3009,22 @@ Méthode de calcul de l'application :
                     <WealthChart data={monthlyMetrics} />
                   </div>
 
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+                  <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
                     <KPICard icon={TrendingUp} label="Gain lié aux placements" value={fmtEUR(cumGain)} onAsk={() => askClaude("Gain lié aux placements", fmtEUR(cumGain))}
                       sub={isMobile ? `${fmtPct(cumGainPct)} du capital investi` : `${fmtPct(cumGainPct)} du capital investi (${fmtEUR(investedNow)})`} tone={cumGain >= 0 ? "up" : "down"} />
-                    <KPICard icon={PiggyBank} label="Épargne cumulée" value={fmtEUR(cumSavings)} onAsk={() => askClaude("Épargne cumulée", fmtEUR(cumSavings))}
-                      sub="Versements + variation de trésorerie" />
+                    <KPICard icon={Wallet} label="Gain lié aux revenus" value={fmtEUR(cumGainRevenus)} onAsk={() => askClaude("Gain lié aux revenus", fmtEUR(cumGainRevenus))}
+                      sub={isMobile ? "Revenus − dépenses" : "Évolution du patrimoine − gain sur placements"} tone={cumGainRevenus >= 0 ? "up" : "down"} />
+                    <KPICard icon={PiggyBank} label="Épargne versée cumulée" value={fmtEUR(cumVersements)} onAsk={() => askClaude("Épargne versée cumulée", fmtEUR(cumVersements))}
+                      sub={isMobile ? "Virements vers placements" : "Versements nets vers les placements"} />
                     <KPICard icon={Percent} label="Gain placement moyen / an" value={fmtEUR(avgAnnualGainPlacement)} onAsk={() => askClaude("Gain placement moyen / an", fmtEUR(avgAnnualGainPlacement))}
                       sub={isMobile ? `Sur ${monthsTracked} mois` : `Ramené à 12 mois (sur ${monthsTracked} mois)`} />
-                    <KPICard icon={PiggyBank} label="Épargne moyenne / an" value={fmtEUR(avgAnnualGainEpargne)} onAsk={() => askClaude("Épargne moyenne / an", fmtEUR(avgAnnualGainEpargne))}
+                    <KPICard icon={Wallet} label="Gain revenus moyen / an" value={fmtEUR(avgAnnualGainRevenus)} onAsk={() => askClaude("Gain revenus moyen / an", fmtEUR(avgAnnualGainRevenus))}
+                      sub={isMobile ? `Sur ${monthsTracked} mois` : `Ramené à 12 mois (sur ${monthsTracked} mois)`} />
+                    <KPICard icon={PiggyBank} label="Épargne versée moyenne / an" value={fmtEUR(avgAnnualVersements)} onAsk={() => askClaude("Épargne versée moyenne / an", fmtEUR(avgAnnualVersements))}
                       sub={isMobile ? `Sur ${monthsTracked} mois` : `Ramené à 12 mois (sur ${monthsTracked} mois)`} />
                   </div>
 
-                  <Panel title="Évolution mensuelle" subtitle="Ce que vous avez épargné et ce que vos placements ont rapporté, mois par mois"
+                  <Panel title="Évolution mensuelle" subtitle="Ce que vos revenus (moins vos dépenses) et vos placements ont apporté au patrimoine, mois par mois"
                     action={
                       <div className="flex shrink-0 p-0.5 rounded-lg text-xs" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
                         {[[12, "12 mois"], [0, "Tout"]].map(([v, label]) => (
@@ -2963,7 +3038,7 @@ Méthode de calcul de l'application :
                     <MonthlyEvolutionChart data={monthlyRange ? monthlyMetrics.slice(-(monthlyRange + 1)) : monthlyMetrics} />
                   </Panel>
 
-                  <Panel title="Bilan annuel" subtitle="Épargne, gain de placement et variation du patrimoine par année">
+                  <Panel title="Bilan annuel" subtitle="Gain lié aux revenus, gain sur placements et variation du patrimoine par année">
                     <YearlyBarChart data={yearlyMetrics} />
                   </Panel>
 
@@ -3041,7 +3116,7 @@ Méthode de calcul de l'application :
                 <div className="space-y-3 md:space-y-6">
                   <WarningsPanel items={monthlyWarnings} />
                   <Panel title="Relevés mensuels" subtitle="Correction manuelle des valeurs et des mouvements">
-                    <HistoryTab monthly={monthly} setMonthly={setMonthly} />
+                    <HistoryTab monthly={monthly} setMonthly={setMonthly} allFlows={allFlows} />
                   </Panel>
                 </div>
               )}
