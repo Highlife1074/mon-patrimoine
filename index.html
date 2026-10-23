@@ -18,7 +18,8 @@
         "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
         "recharts": "https://esm.sh/recharts@2.12.0?deps=react@18.2.0,react-dom@18.2.0",
         "lucide-react": "https://esm.sh/lucide-react@0.330.0?deps=react@18.2.0",
-        "xlsx": "https://esm.sh/xlsx@0.18.5"
+        "xlsx": "https://esm.sh/xlsx@0.18.5",
+        "@anthropic-ai/sdk": "https://esm.sh/@anthropic-ai/sdk@0.132.0"
       }
     }
   </script>
@@ -34,6 +35,7 @@
     import React, { useState, useEffect, useMemo, useRef, useContext, createContext } from "react";
     import { createRoot } from "react-dom/client";
     import * as XLSX from "xlsx";
+    import Anthropic from "@anthropic-ai/sdk";
     import {
       AreaChart, Area, LineChart, Line, PieChart, Pie, Cell,
       XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
@@ -43,7 +45,7 @@
       Wallet, TrendingUp, PiggyBank, Percent, Plus, Moon, Sun,
       ChevronDown, ChevronRight, ChevronLeft, X, ArrowUpRight, ArrowDownRight,
       Link2, Check, Clock, ArrowLeftRight, RefreshCw, Download, Upload, LogOut,
-      LayoutDashboard, Briefcase, History, MoreHorizontal
+      LayoutDashboard, Briefcase, History, MoreHorizontal, MessageCircle, Send, KeyRound
     } from "lucide-react";
     
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
@@ -622,7 +624,7 @@
       );
     }
 
-    function KPICard({ icon: Icon, label, value, sub, tone }) {
+    function KPICard({ icon: Icon, label, value, sub, tone, onAsk }) {
       const t = useTheme();
       const toneColor = tone === "up" ? t.gain : tone === "down" ? t.loss : t.textMuted;
       const arrow = tone === "up" ? "▲ " : tone === "down" ? "▼ " : "";
@@ -632,7 +634,12 @@
             <span className="w-7 h-7 md:w-8 md:h-8 shrink-0 rounded-xl flex items-center justify-center" style={{ background: `${t.accent}1f` }}>
               <Icon size={16} color={t.accent} />
             </span>
-            <span className="text-xs font-medium leading-tight" style={{ color: t.textMuted }}>{label}</span>
+            <span className="text-xs font-medium leading-tight flex-1" style={{ color: t.textMuted }}>{label}</span>
+            {onAsk && (
+              <button onClick={onAsk} title="Demander à Claude d'expliquer ce chiffre" className="p-1 -m-1 rounded-lg shrink-0" style={{ color: t.textMuted }}>
+                <MessageCircle size={15} />
+              </button>
+            )}
           </div>
           <div className="text-xl md:text-2xl font-semibold tracking-tight" style={{ color: t.text, ...NUM }}>{value}</div>
           {sub && <div className="text-[11px] md:text-xs leading-snug" style={{ color: toneColor }}>{arrow}{sub}</div>}
@@ -2286,6 +2293,238 @@
     // =========================================================================
     // APPLICATION PRINCIPALE
     // =========================================================================
+    // ================== CHAT CLAUDE ==================
+    // La clé API est rattachée au compte connecté : un document Firebase par utilisateur.
+    const claudeKeyRef = (uid) => doc(db, "patrimoine", `claude_${uid}`);
+
+    const CHAT_INSTRUCTIONS = `Tu es l'assistant de l'application « Mon patrimoine », un tableau de bord personnel de suivi de patrimoine.
+L'utilisateur te pose des questions sur ses chiffres : réponds en français, de façon concise, en t'appuyant uniquement sur les données fournies ci-dessous.
+Quand tu expliques un chiffre, montre le calcul avec les valeurs réelles (mois, comptes, montants) pour qu'il puisse le vérifier.
+Si une donnée manque pour répondre, dis-le plutôt que de l'inventer. Tu n'es pas conseiller financier : tu peux analyser, pas recommander d'acheter ou vendre.
+Réponds en texte simple : paragraphes courts et listes avec « - » ; utilise **gras** avec parcimonie, pas de tableaux.
+
+Méthode de calcul de l'application :
+- Les relevés mensuels donnent la valeur de chaque compte (byAccount) et les versements nets du mois par compte (flows : + = argent apporté, - = argent retiré). Un relevé pris jusqu'au 10 du mois compte pour la fin du mois précédent ; un seul relevé par mois (le dernier) est retenu.
+- LCL et Revolut sont la trésorerie (comptes courants) ; leurs flux ne comptent pas comme versements.
+- Capital (par mois) = patrimoine du premier relevé + cumul des versements nets vers les comptes hors trésorerie.
+- Capital investi = capital - trésorerie du premier relevé.
+- Pour chaque mois : savings = variation du capital (versements nets) ; cash = variation de trésorerie (LCL + Revolut) ; épargne = savings + cash ; gain de placement = (variation de patrimoine - savings) - cash ; monthChange = épargne + gain = variation totale du patrimoine.
+- Gain lié aux placements = somme des gains mensuels ; Épargne cumulée = somme des épargnes mensuelles.
+- Moyennes annuelles = cumul / nombre de mois suivis × 12.
+- Bilan annuel : rendement de l'année = gain de l'année / patrimoine en début d'année.
+- Les virements validés non rattachés à un relevé sont ajoutés aux flux.`;
+
+    function buildChatContext({ monthlyEff, monthlyMetrics, yearlyMetrics, positions, transfers, kpis }) {
+      const r = (v) => (typeof v === "number" ? Math.round(v) : v);
+      const lines = [];
+      lines.push(`Date du jour : ${new Date().toISOString().slice(0, 10)}`);
+      lines.push("\n## Chiffres clés affichés");
+      for (const [k, v] of Object.entries(kpis)) lines.push(`- ${k} : ${v}`);
+      lines.push("\n## Métriques mensuelles (periode;patrimoine;capitalInvesti;versements;variationTresorerie;epargne;gainPlacement;variationTotale)");
+      monthlyMetrics.forEach((m) => lines.push([m.periode, m.wealth, m.invested, m.savings, m.cash, m.epargne, m.gain, m.monthChange].map(r).join(";")));
+      lines.push("\n## Bilan annuel (annee;patrimoineDebut;patrimoineFin;versements;variationTresorerie;epargne;gainPlacement;rendementPct)");
+      yearlyMetrics.forEach((y) => lines.push([y.year, y.startWealth, y.endWealth, y.savings, y.cash, y.epargne, y.gain, (y.yieldPct * 100).toFixed(2)].map(r).join(";")));
+      lines.push("\n## Relevés mensuels bruts (valeurs par compte et flux du mois, en €)");
+      monthlyEff.forEach((m) => {
+        const vals = Object.entries(m.byAccount || {}).filter(([, v]) => v).map(([a, v]) => `${a}=${r(v)}`).join(" ");
+        const flows = Object.entries(m.flows || {}).filter(([, v]) => v).map(([a, v]) => `${a}=${r(v)}`).join(" ");
+        lines.push(`${m.periode || periodeFromDate(m.date)} (relevé du ${m.date.slice(0, 10)}) total=${r(m.totalWealth)} | ${vals}${flows ? ` | flux: ${flows}` : ""}${m.warning ? ` | alerte: ${m.warning}` : ""}`);
+      });
+      lines.push("\n## Positions boursières (compte;ticker;nom;quantité;PRU;dernier cours;devise;catégorie;secteur)");
+      positions.forEach((p) => lines.push([p.accountId, p.ticker, p.name, p.quantity, p.costBasis, p.lastPrice, p.currency, p.category, p.sector].join(";")));
+      if (transfers.length) {
+        lines.push("\n## Virements (date départ;de;vers;montant;statut;libellé)");
+        transfers.forEach((tr) => lines.push([tr.departureDate?.slice(0, 10), tr.sourceAccountId, tr.destinationAccountId, tr.amount, tr.status, tr.label || ""].join(";")));
+      }
+      return lines.join("\n");
+    }
+
+    // Rendu minimal : paragraphes et **gras**
+    function ChatText({ text }) {
+      return text.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
+        part.startsWith("**") && part.endsWith("**") ? <strong key={i}>{part.slice(2, -2)}</strong> : <React.Fragment key={i}>{part}</React.Fragment>
+      );
+    }
+
+    const CHAT_SUGGESTIONS = [
+      "Comment est calculé le gain lié aux placements ?",
+      "Pourquoi mon patrimoine a-t-il varié le mois dernier ?",
+      "Quel compte a le plus progressé cette année ?",
+      "Quelles sont mes positions en perte ?",
+    ];
+
+    function ClaudeChat({ open, onClose, seed, context, uid }) {
+      const t = useTheme();
+      const isMobile = useIsMobile();
+      const [apiKey, setApiKey] = useState("");
+      const [keyLoaded, setKeyLoaded] = useState(false);
+      const [keyDraft, setKeyDraft] = useState("");
+      const [messages, setMessages] = useState([]);
+      const [input, setInput] = useState("");
+      const [busy, setBusy] = useState(false);
+      const [error, setError] = useState(null);
+      const scrollRef = useRef(null);
+      const streamRef = useRef(null);
+
+      useEffect(() => {
+        let annule = false;
+        setKeyLoaded(false);
+        getDoc(claudeKeyRef(uid))
+          .then((snap) => { if (!annule) setApiKey(snap.exists() ? snap.data().apiKey || "" : ""); })
+          .catch((e) => { console.error("Lecture clé Claude:", e); if (!annule) setError("Impossible de lire la clé API du compte."); })
+          .finally(() => { if (!annule) setKeyLoaded(true); });
+        return () => { annule = true; };
+      }, [uid]);
+      useEffect(() => { if (seed?.text) setInput(seed.text); }, [seed]);
+      useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }); }, [messages, open]);
+      useEffect(() => () => streamRef.current?.abort(), []);
+
+      const saveKey = async () => {
+        const k = keyDraft.trim();
+        if (!k) return;
+        try {
+          await setDoc(claudeKeyRef(uid), { apiKey: k });
+          setApiKey(k); setKeyDraft(""); setError(null);
+        } catch (e) {
+          console.error("Enregistrement clé Claude:", e);
+          setError("Impossible d'enregistrer la clé sur le compte.");
+        }
+      };
+      const forgetKey = () => {
+        setApiKey("");
+        setDoc(claudeKeyRef(uid), { apiKey: "" }).catch((e) => console.error("Suppression clé Claude:", e));
+      };
+
+      const send = async (text) => {
+        const question = (text ?? input).trim();
+        if (!question || busy || !apiKey) return;
+        const history = [...messages, { role: "user", content: question }];
+        setMessages([...history, { role: "assistant", content: "" }]);
+        setInput(""); setBusy(true); setError(null);
+        const setReply = (fn) => setMessages((ms) => [...ms.slice(0, -1), { role: "assistant", content: fn(ms[ms.length - 1].content) }]);
+        try {
+          const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
+          const stream = client.beta.messages.stream({
+            model: "claude-sonnet-5-5",
+            max_tokens: 16000,
+            output_config: { effort: "medium" },
+            betas: ["server-side-fallback-2026-07-01"],
+            fallbacks: "default",
+            system: [
+              { type: "text", text: CHAT_INSTRUCTIONS },
+              { type: "text", text: `# Données du patrimoine\n${context}`, cache_control: { type: "ephemeral" } },
+            ],
+            messages: history,
+          });
+          streamRef.current = stream;
+          stream.on("text", (delta) => setReply((c) => c + delta));
+          const final = await stream.finalMessage();
+          if (final.stop_reason === "refusal") setReply(() => "Claude n'a pas pu répondre à cette question.");
+          else if (final.stop_reason === "max_tokens") setReply((c) => c + "\n\n(réponse tronquée)");
+        } catch (e) {
+          let msg = "Impossible de joindre Claude. Vérifiez votre connexion.";
+          if (e instanceof Anthropic.AuthenticationError) msg = "Clé API refusée : vérifiez-la ou saisissez-en une autre.";
+          else if (e instanceof Anthropic.RateLimitError) msg = "Trop de requêtes, réessayez dans un instant.";
+          else if (e instanceof Anthropic.APIUserAbortError) msg = null;
+          else if (e instanceof Anthropic.APIError && e.status) msg = `Erreur de l'API Claude (HTTP ${e.status}).`;
+          setError(msg);
+          setMessages((ms) => (ms[ms.length - 1]?.content ? ms : ms.slice(0, -1)));
+          if (e instanceof Anthropic.AuthenticationError) forgetKey();
+        } finally {
+          streamRef.current = null;
+          setBusy(false);
+        }
+      };
+
+      if (!open) return null;
+
+      const panelStyle = isMobile
+        ? { inset: 0, paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }
+        : { right: 24, bottom: 24, width: 420, height: "min(640px, calc(100vh - 48px))", borderRadius: 20, border: `1px solid ${t.border}` };
+
+      return (
+        <div className="fixed z-50 flex flex-col overflow-hidden" style={{ background: t.panel, boxShadow: t.shadow, fontFamily: FONT, ...panelStyle }}>
+          <div className="flex items-center gap-3 px-4 py-3" style={{ borderBottom: `1px solid ${t.border}` }}>
+            <span className="w-8 h-8 shrink-0 rounded-xl flex items-center justify-center" style={{ background: `${t.accent}1f` }}>
+              <MessageCircle size={16} color={t.accent} />
+            </span>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-semibold" style={{ color: t.text }}>Demander à Claude</div>
+              <div className="text-[11px]" style={{ color: t.textMuted }}>Questions sur vos chiffres</div>
+            </div>
+            {messages.length > 0 && !busy && (
+              <button onClick={() => { setMessages([]); setError(null); }} title="Nouvelle conversation" className="p-2 rounded-lg" style={{ color: t.textMuted }}>
+                <RefreshCw size={15} />
+              </button>
+            )}
+            {apiKey && (
+              <button onClick={forgetKey} title="Retirer la clé API du compte" className="p-2 rounded-lg" style={{ color: t.textMuted }}>
+                <KeyRound size={15} />
+              </button>
+            )}
+            <button onClick={() => { streamRef.current?.abort(); onClose(); }} title="Fermer" className="p-2 rounded-lg" style={{ color: t.textMuted }}>
+              <X size={18} />
+            </button>
+          </div>
+
+          <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+            {!keyLoaded ? (
+              <p className="text-sm" style={{ color: t.textMuted }}>Chargement…</p>
+            ) : !apiKey ? (
+              <div className="space-y-3 text-sm" style={{ color: t.text }}>
+                <p>Pour discuter avec Claude, saisissez votre clé API Anthropic (console.anthropic.com).</p>
+                <p className="text-xs" style={{ color: t.textMuted }}>
+                  Elle est enregistrée sur votre compte et sera disponible sur tous vos appareils. Les données du patrimoine sont envoyées à l'API Claude à chaque question.
+                </p>
+                <input type="password" value={keyDraft} onChange={(e) => setKeyDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && saveKey()}
+                  placeholder="sk-ant-…" autoComplete="off" className="w-full px-3 py-2 rounded-xl text-sm outline-none"
+                  style={{ background: t.panelAlt, border: `1px solid ${t.border}`, color: t.text }} />
+                <button onClick={saveKey} disabled={!keyDraft.trim()} className="px-4 py-2 rounded-xl text-sm font-medium"
+                  style={{ background: t.accent, color: t.onAccent, opacity: keyDraft.trim() ? 1 : 0.5 }}>
+                  Enregistrer la clé
+                </button>
+              </div>
+            ) : messages.length === 0 ? (
+              <div className="space-y-2">
+                <p className="text-sm" style={{ color: t.textMuted }}>Posez une question sur un chiffre du tableau de bord, un mois, un compte ou une position.</p>
+                {CHAT_SUGGESTIONS.map((q) => (
+                  <button key={q} onClick={() => send(q)} className="block w-full text-left px-3 py-2 rounded-xl text-sm"
+                    style={{ background: t.panelAlt, border: `1px solid ${t.border}`, color: t.text }}>
+                    {q}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              messages.map((m, i) => (
+                <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+                  <div className="max-w-[88%] px-3 py-2 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap"
+                    style={m.role === "user"
+                      ? { background: t.accent, color: t.onAccent }
+                      : { background: t.panelAlt, color: t.text, border: `1px solid ${t.border}` }}>
+                    {m.content ? <ChatText text={m.content} /> : <span style={{ color: t.textMuted }}>Réflexion…</span>}
+                  </div>
+                </div>
+              ))
+            )}
+            {error && <p className="text-xs" style={{ color: t.loss }}>{error}</p>}
+          </div>
+
+          {apiKey && (
+            <div className="flex items-end gap-2 px-3 py-3" style={{ borderTop: `1px solid ${t.border}` }}>
+              <textarea value={input} onChange={(e) => setInput(e.target.value)} rows={1}
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+                placeholder="Votre question…" className="flex-1 resize-none px-3 py-2 rounded-xl text-sm outline-none"
+                style={{ background: t.panelAlt, border: `1px solid ${t.border}`, color: t.text, maxHeight: 120 }} />
+              <button onClick={() => send()} disabled={busy || !input.trim()} title="Envoyer" className="p-2.5 rounded-xl shrink-0"
+                style={{ background: t.accent, color: t.onAccent, opacity: busy || !input.trim() ? 0.5 : 1 }}>
+                <Send size={16} />
+              </button>
+            </div>
+          )}
+        </div>
+      );
+    }
+
     function PatrimoineApp() {
       const [themeName, setThemeName] = useState("dark");
       const t = THEMES[themeName];
@@ -2527,6 +2766,25 @@
         ? yearlyYields.reduce((s, y) => s + y.yieldPct, 0) / yearlyYields.length 
         : 0;
 
+      const [chatOpen, setChatOpen] = useState(false);
+      const [chatSeed, setChatSeed] = useState(null);
+      const askClaude = (label, value) => {
+        setChatSeed({ text: `Explique-moi le chiffre « ${label} : ${value} ». Comment est-il calculé ?`, n: Date.now() });
+        setChatOpen(true);
+      };
+      const chatContext = useMemo(() => buildChatContext({
+        monthlyEff, monthlyMetrics, yearlyMetrics, positions, transfers,
+        kpis: {
+          "Patrimoine total": fmtEUR(lastMonthly?.totalWealth),
+          "Variation sur le dernier mois": `${fmtEUR(totalWealthChange)} (${fmtPct(lastMonthVariationPct)})`,
+          "Gain lié aux placements": `${fmtEUR(cumGain)}, soit ${fmtPct(cumGainPct)} du capital investi (${fmtEUR(investedNow)})`,
+          "Épargne cumulée": fmtEUR(cumSavings),
+          "Gain placement moyen / an": `${fmtEUR(avgAnnualGainPlacement)} (sur ${monthsTracked} mois)`,
+          "Épargne moyenne / an": `${fmtEUR(avgAnnualGainEpargne)} (sur ${monthsTracked} mois)`,
+          "Rendement annuel moyen": fmtPct(avgYield),
+        },
+      }), [monthlyEff, monthlyMetrics, yearlyMetrics, positions, transfers]);
+
       const NAV_ITEMS = [
         { id: "dashboard", label: "Tableau de bord", short: "Accueil", icon: LayoutDashboard },
         { id: "positions", label: "Positions", short: "Positions", icon: Briefcase },
@@ -2570,6 +2828,9 @@
 
                   {isMobile ? (
                     <div className="flex items-center gap-1 relative">
+                      <button onClick={() => setChatOpen(true)} title="Demander à Claude" className="p-2.5 rounded-xl" style={{ color: t.textMuted }}>
+                        <MessageCircle size={18} />
+                      </button>
                       <button onClick={() => setThemeName((n) => (n === "dark" ? "light" : "dark"))} title="Changer de thème" className="p-2.5 rounded-xl" style={{ color: t.textMuted }}>
                         {themeName === "dark" ? <Sun size={18} /> : <Moon size={18} />}
                       </button>
@@ -2613,6 +2874,11 @@
                     </button>
                     <button onClick={handleLogout} title="Se déconnecter" className="p-2 rounded-lg transition-colors" style={{ color: t.textMuted }}>
                       <LogOut size={16} />
+                    </button>
+                    <button onClick={() => setChatOpen(true)} title="Poser une question sur vos chiffres"
+                      className="flex items-center gap-1.5 pl-3 pr-4 py-2 rounded-xl text-sm font-medium ml-1"
+                      style={{ background: t.panelAlt, color: t.text, border: `1px solid ${t.border}` }}>
+                      <MessageCircle size={15} /> Demander à Claude
                     </button>
                     <button
                       onClick={openMonthlyModal}
@@ -2662,6 +2928,10 @@
                             {totalWealthChange >= 0 ? "▲" : "▼"} {signed(totalWealthChange)} ({fmtPct(lastMonthVariationPct)})
                           </span>
                           <span style={{ color: t.textMuted }}>sur le dernier mois</span>
+                          <button onClick={() => askClaude("Variation du patrimoine sur le dernier mois", `${signed(totalWealthChange)} (${fmtPct(lastMonthVariationPct)})`)}
+                            title="Demander à Claude d'expliquer cette variation" className="p-1 rounded-lg" style={{ color: t.textMuted }}>
+                            <MessageCircle size={15} />
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -2669,13 +2939,13 @@
                   </div>
 
                   <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-                    <KPICard icon={TrendingUp} label="Gain lié aux placements" value={fmtEUR(cumGain)}
+                    <KPICard icon={TrendingUp} label="Gain lié aux placements" value={fmtEUR(cumGain)} onAsk={() => askClaude("Gain lié aux placements", fmtEUR(cumGain))}
                       sub={isMobile ? `${fmtPct(cumGainPct)} du capital investi` : `${fmtPct(cumGainPct)} du capital investi (${fmtEUR(investedNow)})`} tone={cumGain >= 0 ? "up" : "down"} />
-                    <KPICard icon={PiggyBank} label="Épargne cumulée" value={fmtEUR(cumSavings)}
+                    <KPICard icon={PiggyBank} label="Épargne cumulée" value={fmtEUR(cumSavings)} onAsk={() => askClaude("Épargne cumulée", fmtEUR(cumSavings))}
                       sub="Versements + variation de trésorerie" />
-                    <KPICard icon={Percent} label="Gain placement moyen / an" value={fmtEUR(avgAnnualGainPlacement)}
+                    <KPICard icon={Percent} label="Gain placement moyen / an" value={fmtEUR(avgAnnualGainPlacement)} onAsk={() => askClaude("Gain placement moyen / an", fmtEUR(avgAnnualGainPlacement))}
                       sub={isMobile ? `Sur ${monthsTracked} mois` : `Ramené à 12 mois (sur ${monthsTracked} mois)`} />
-                    <KPICard icon={PiggyBank} label="Épargne moyenne / an" value={fmtEUR(avgAnnualGainEpargne)}
+                    <KPICard icon={PiggyBank} label="Épargne moyenne / an" value={fmtEUR(avgAnnualGainEpargne)} onAsk={() => askClaude("Épargne moyenne / an", fmtEUR(avgAnnualGainEpargne))}
                       sub={isMobile ? `Sur ${monthsTracked} mois` : `Ramené à 12 mois (sur ${monthsTracked} mois)`} />
                   </div>
 
@@ -2806,6 +3076,8 @@
               </nav>
             </>
           )}
+
+          <ClaudeChat open={chatOpen} onClose={() => setChatOpen(false)} seed={chatSeed} context={chatContext} uid={auth.currentUser?.uid} />
 
           <MonthlySnapshotModal
             key={monthlyModalKey}
