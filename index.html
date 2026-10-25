@@ -2262,7 +2262,7 @@
                 </tr>
               </thead>
               <tbody>
-                {displayed.map(({ row: r, split }) => {
+                {displayed.map(({ row: r, prev, split }) => {
                   const periode = r.periode || periodeFromDate(r.date);
                   const doublon = periodeCounts[periode] > 1;
                   const variation = split ? split.variation : null;
