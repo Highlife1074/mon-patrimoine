@@ -531,6 +531,25 @@
       return { ...parsed, asOf: new Date().toISOString().slice(0, 10) };
     }
 
+    // Contrôle de cohérence flux / solde entre deux relevés consécutifs
+    function detectFlowAnomalies(rows) {
+      const sorted = [...rows].sort((a, b) => new Date(a.date) - new Date(b.date));
+      const out = {};
+      for (let i = 1; i < sorted.length; i++) {
+        const prev = sorted[i - 1], cur = sorted[i];
+        const msgs = [];
+        for (const [accountId, flow] of Object.entries(cur.flows || {})) {
+          if (!flow) continue;
+          const delta = (cur.byAccount?.[accountId] || 0) - (prev.byAccount?.[accountId] || 0);
+          const name = accounts.find((a) => a.id === accountId)?.name || accountId;
+          if (delta === 0) msgs.push(`${name} : flux ${signed(flow)} mais solde inchangé`);
+          else if (flow < 0 && delta > 0) msgs.push(`${name} : retrait ${signed(flow)} mais solde en hausse (${signed(delta)})`);
+        }
+        if (msgs.length) out[cur.id] = msgs.join(" · ");
+      }
+      return out;
+    }
+
     const THEMES = {
       dark: {
         bg: "#0e0f11", panel: "#17181b", panelAlt: "#1f2024", border: "#2a2b30",
@@ -2161,10 +2180,14 @@
         [monthly]
       );
       const displayed = useMemo(
-        () => sorted.map((r, i) => {
-          const prev = i > 0 ? sorted[i - 1] : null;
-          return { row: r, prev, split: prev ? splitVariation(prev, r, allFlows) : null };
-        }).reverse(),
+        () => {
+          const checks = detectFlowAnomalies(sorted);
+          return sorted.map((r, i) => {
+            const prev = i > 0 ? sorted[i - 1] : null;
+            const warning = [r.warning, checks[r.id]].filter(Boolean).join(" · ");
+            return { row: warning ? { ...r, warning } : r, prev, split: prev ? splitVariation(prev, r, allFlows) : null };
+          }).reverse();
+        },
         [sorted, allFlows]
       );
 
@@ -2806,7 +2829,13 @@ Méthode de calcul de l'application :
 
       const lastMonthly = monthlyEff[monthlyEff.length - 1];
       const monthlyWarnings = useMemo(
-        () => monthly.filter((m) => m.warning).sort((a, b) => new Date(a.date) - new Date(b.date)),
+        () => {
+          const checks = detectFlowAnomalies(monthly);
+          return monthly
+            .map((m) => ({ ...m, warning: [m.warning, checks[m.id]].filter(Boolean).join(" · ") }))
+            .filter((m) => m.warning)
+            .sort((a, b) => new Date(a.date) - new Date(b.date));
+        },
         [monthly]
       );
       const lastMetric = monthlyMetrics[monthlyMetrics.length - 1];
