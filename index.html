@@ -1901,8 +1901,6 @@
       });
       const [includedTransferIds, setIncludedTransferIds] = useState(() => pendingTransfers.map(tr => tr.id));
 
-      if (!open) return null;
-
       const total = Object.values(byAccount).reduce((s, v) => s + (Number(v) || 0), 0);
 
       const handleDateChange = (v) => {
@@ -1928,6 +1926,8 @@
         });
         return flows;
       }, [includedTransferIds, pendingTransfers]);
+
+      if (!open) return null;
 
       const handleSave = () => {
         onSave({
