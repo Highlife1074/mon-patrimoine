@@ -402,7 +402,382 @@
         .filter((p) => p.quantity);
     }
 
-    const fmtEUR = (v) => new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(v || 0);
+    // ================== RELEVÉS DE COURTIER (mise à jour mensuelle) ==================
+    // Correspondance entre les comptes de l'app et ceux de l'artifact « Suivi hebdo bourse »
+    const HEBDO_KEYS = { cto: "degiro", ibkr: "ibkr", pea_phil: "peaPhil", pea_ghiz: "peaGhiz" };
+    const HEBDO_TO_ACCOUNT = Object.fromEntries(Object.entries(HEBDO_KEYS).map(([a, h]) => [h, a]));
+
+    function toIsoDay(s) {
+      if (s === null || s === undefined || s === "") return "";
+      if (s instanceof Date) return s.toISOString().slice(0, 10);
+      if (typeof s === "number") return new Date(Math.round((s - 25569) * 864e5)).toISOString().slice(0, 10);
+      const fr = String(s).trim().match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2,4})/);
+      if (fr) return `${fr[3].length === 2 ? "20" + fr[3] : fr[3]}-${fr[2].padStart(2, "0")}-${fr[1].padStart(2, "0")}`;
+      const iso = String(s).match(/^\d{4}-\d{2}-\d{2}/);
+      return iso ? iso[0] : "";
+    }
+
+    // Export « Transactions » de Degiro (xls/csv) : lu sans appel à Claude
+    function parseDegiroTransactions(headers, rows) {
+      const h = headers.map((x) => String(x || "").trim().toLowerCase());
+      const col = (re) => h.findIndex((x) => re.test(x));
+      const iOrdre = col(/^id ordre/), iIsin = col(/isin/), iQte = col(/^quantit/), iNeg = col(/montant n[ée]goci[ée] eur/);
+      if (iOrdre < 0 || iIsin < 0 || iQte < 0 || iNeg < 0) return null;
+      const iDate = col(/^date/), iHeure = col(/^heure/), iProd = col(/^produit/), iCours = col(/^cours/), iEur = col(/^montant eur/);
+      const iFrais = col(/frais de courtage/), iAuto = col(/autofx/);
+      return rows
+        .filter((r) => r[iIsin] && num(r[iQte]))
+        .map((r) => {
+          const quantity = num(r[iQte]);
+          const amountEUR = num(r[iNeg]);
+          const gross = iEur >= 0 ? num(r[iEur]) : amountEUR;
+          return {
+            id: ["degiro", r[iOrdre], quantity, r[iCours], amountEUR].join("|"),
+            date: toIsoDay(r[iDate]),
+            ts: iHeure >= 0 ? String(r[iHeure] || "") : "",
+            name: String(r[iProd] || r[iIsin]),
+            isin: String(r[iIsin]).trim(),
+            ticker: null,
+            quantity,
+            priceEUR: quantity ? Math.abs(gross) / Math.abs(quantity) : 0,
+            amountEUR,
+            fees: Math.abs(num(r[iFrais]) || 0) + Math.abs(num(r[iAuto]) || 0),
+          };
+        });
+    }
+
+    // Export « Portefeuille » de Degiro : Produit ; Symbole/ISIN ; Quantité ; Clôture ; Montant local ; Valeur en EUR
+    function parseDegiroPortfolio(headers, rows) {
+      const h = headers.map((x) => String(x || "").trim().toLowerCase());
+      const col = (re) => h.findIndex((x) => re.test(x));
+      const iIsin = col(/symbole\s*\/\s*isin/), iEur = col(/valeur en eur/), iQte = col(/^quantit/), iProd = col(/^produit/);
+      if (iIsin < 0 || iEur < 0 || iProd < 0) return null;
+      const iClot = col(/^cl[ôo]ture/);
+      let value = 0;
+      const positions = [];
+      rows.forEach((r) => {
+        const eur = num(r[iEur]);
+        if (!isFinite(eur)) return;
+        value += eur;
+        const qty = iQte >= 0 ? num(r[iQte]) : NaN;
+        if (!r[iIsin] || !qty) return; // ligne d'espèces : comptée dans la valeur, pas comme position
+        positions.push({ name: String(r[iProd]), isin: String(r[iIsin]).trim(), ticker: null, quantity: qty,
+          costBasisEUR: null, priceEUR: eur / qty, currency: iClot >= 0 ? String(r[iClot + 1] || "EUR") : "EUR", valueEUR: eur });
+      });
+      return positions.length ? { value, positions } : null;
+    }
+
+    const STATEMENT_SCHEMA = {
+      type: "object",
+      additionalProperties: false,
+      required: ["broker", "account", "statementDate", "accountValueEUR", "cashEUR", "deposits", "positions", "trades", "notes"],
+      properties: {
+        broker: { type: "string" },
+        account: { type: "string", enum: ["cto", "ibkr", "pea_phil", "pea_ghiz", "inconnu"] },
+        statementDate: { type: ["string", "null"] },
+        accountValueEUR: { type: ["number", "null"] },
+        cashEUR: { type: ["number", "null"] },
+        deposits: {
+          type: "array",
+          items: {
+            type: "object", additionalProperties: false, required: ["date", "amountEUR", "label"],
+            properties: { date: { type: "string" }, amountEUR: { type: "number" }, label: { type: "string" } },
+          },
+        },
+        positions: {
+          type: "array",
+          items: {
+            type: "object", additionalProperties: false,
+            required: ["name", "isin", "ticker", "quantity", "costBasisEUR", "priceEUR", "currency", "valueEUR"],
+            properties: {
+              name: { type: "string" }, isin: { type: ["string", "null"] }, ticker: { type: ["string", "null"] },
+              quantity: { type: "number" }, costBasisEUR: { type: ["number", "null"] }, priceEUR: { type: ["number", "null"] },
+              currency: { type: "string" }, valueEUR: { type: ["number", "null"] },
+            },
+          },
+        },
+        trades: {
+          type: "array",
+          items: {
+            type: "object", additionalProperties: false,
+            required: ["orderId", "date", "name", "isin", "ticker", "quantity", "priceEUR", "amountEUR", "fees"],
+            properties: {
+              orderId: { type: ["string", "null"] }, date: { type: "string" }, name: { type: "string" },
+              isin: { type: ["string", "null"] }, ticker: { type: ["string", "null"] }, quantity: { type: "number" },
+              priceEUR: { type: ["number", "null"] }, amountEUR: { type: "number" }, fees: { type: ["number", "null"] },
+            },
+          },
+        },
+        notes: { type: "string" },
+      },
+    };
+
+    const STATEMENT_INSTRUCTIONS = `Tu lis un relevé de compte-titres d'un particulier français et tu en extrais les données au format JSON demandé.
+Comptes possibles (champ account) :
+- "cto" : compte-titres Degiro (CTO) ;
+- "ibkr" : Interactive Brokers ;
+- "pea_phil" : PEA chez Bourse Direct dont le titulaire est Philippe ;
+- "pea_ghiz" : PEA chez Bourse Direct dont le titulaire est Ghizlane / Ghiz ;
+- "inconnu" si tu ne peux pas trancher.
+Règles :
+- Tous les montants en euros. Si le relevé est dans une autre devise, convertis avec le taux de change indiqué dans le relevé et signale-le dans notes.
+- statementDate : date d'arrêté du relevé (AAAA-MM-JJ), ou la date de la dernière opération pour un historique de transactions.
+- accountValueEUR : valorisation totale du compte (titres + espèces) à statementDate, null si le document ne la donne pas.
+- positions : uniquement si le document liste les lignes détenues. costBasisEUR = prix de revient unitaire, priceEUR = dernier cours unitaire, valueEUR = valeur de la ligne, en euros.
+- trades : achats et ventes de titres. quantity positive pour un achat, négative pour une vente ; amountEUR = montant net débité (négatif) ou crédité (positif), frais compris ; fees = frais en valeur absolue ; orderId = référence de l'ordre si elle existe.
+- deposits : versements d'argent sur le compte (positif) et retraits vers l'extérieur (négatif). N'y mets jamais les achats/ventes, dividendes, coupons, intérêts, frais ou taxes.
+- Ne devine rien : un tableau vide ou null quand l'information est absente. Note dans notes tout ce qui est ambigu.`;
+
+    async function fileToBase64(file) {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let bin = "";
+      for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      return btoa(bin);
+    }
+
+    async function extractStatementWithClaude(apiKey, file) {
+      const name = file.name.toLowerCase();
+      let block;
+      if (name.endsWith(".pdf")) {
+        block = { type: "document", source: { type: "base64", media_type: "application/pdf", data: await fileToBase64(file) } };
+      } else if (/\.(png|jpe?g|webp)$/.test(name)) {
+        const media = name.endsWith(".png") ? "image/png" : name.endsWith(".webp") ? "image/webp" : "image/jpeg";
+        block = { type: "image", source: { type: "base64", media_type: media, data: await fileToBase64(file) } };
+      } else {
+        let text;
+        if (/\.(csv|txt|tsv)$/.test(name)) text = await file.text();
+        else {
+          const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+          text = wb.SheetNames.map((s) => `## Feuille ${s}\n${XLSX.utils.sheet_to_csv(wb.Sheets[s], { FS: ";" })}`).join("\n\n");
+        }
+        block = { type: "text", text: `Contenu du fichier « ${file.name} » :\n${text}` };
+      }
+      const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
+      const stream = client.beta.messages.stream({
+        model: "claude-sonnet-5-5",
+        max_tokens: 32000,
+        output_config: { effort: "low", format: { type: "json_schema", schema: STATEMENT_SCHEMA } },
+        betas: ["server-side-fallback-2026-07-01"],
+        fallbacks: "default",
+        system: STATEMENT_INSTRUCTIONS,
+        messages: [{ role: "user", content: [block, { type: "text", text: `Extrais les données de ce relevé (fichier « ${file.name} »).` }] }],
+      });
+      const msg = await stream.finalMessage();
+      if (msg.stop_reason === "refusal") throw new Error("Claude a refusé de lire ce document");
+      if (msg.stop_reason === "max_tokens") throw new Error("relevé trop long, réponse tronquée");
+      const txt = msg.content.filter((b) => b.type === "text").map((b) => b.text).join("");
+      return JSON.parse(txt);
+    }
+
+    const MOIS_FR = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+    function frLongDateToIso(s) {
+      const m = String(s || "").trim().toLowerCase().match(/^([a-zéû]+)\s+(\d{1,2}),\s*(\d{4})$/);
+      if (!m) return "";
+      const mi = MOIS_FR.indexOf(m[1]);
+      return mi < 0 ? "" : `${m[3]}-${String(mi + 1).padStart(2, "0")}-${m[2].padStart(2, "0")}`;
+    }
+
+    // Relevé d'activité IBKR au format CSV (export « Relevés » de Client Portal, en français)
+    function parseIbkrActivity(text) {
+      // Format machine IBKR : point décimal, virgule de milliers (jamais l'inverse)
+      const num = (v) => { const n = parseFloat(String(v ?? "").replace(/,/g, "")); return isFinite(n) ? n : NaN; };
+      const clean = text.replace(/^﻿/, "");
+      if (!/^Statement,Header/.test(clean)) return null;
+      const sections = {};
+      clean.split(/\r?\n/).forEach((line) => {
+        if (!line.trim()) return;
+        const c = splitCSVLine(line, ",");
+        const [name, kind, ...rest] = c;
+        if (!sections[name]) sections[name] = { header: null, rows: [] };
+        if (kind === "Header" && !sections[name].header) sections[name].header = rest;
+        else if (kind === "Data") sections[name].rows.push(rest);
+      });
+      const sec = (n) => sections[n] || { header: [], rows: [] };
+      const colOf = (s, re) => (s.header || []).findIndex((h) => re.test(h));
+
+      const stmt = Object.fromEntries(sec("Statement").rows.map((r) => [r[0], r[1]]));
+      const date = frLongDateToIso(String(stmt.Period || "").split(" - ").pop()) || toIsoDay(stmt.WhenGenerated);
+
+      const nav = sec("Actif net");
+      const totalRow = nav.rows.find((r) => r[0] === "Total");
+      const value = totalRow ? num(totalRow[colOf(nav, /^Total actuel/)]) : null;
+
+      // Taux de conversion vers l'euro : cours de clôture des soldes de devises
+      const fx = { EUR: 1 };
+      const fxs = sec("Soldes Forex");
+      fxs.rows.forEach((r) => {
+        const cur = r[colOf(fxs, /^Description/)], rate = num(r[colOf(fxs, /^Cours de cl/)]);
+        if (cur && rate > 0) fx[cur] = rate;
+      });
+
+      const instr = sec("Informations instrument financier");
+      const isinOf = {}, nameOf = {};
+      instr.rows.forEach((r) => {
+        const sym = r[colOf(instr, /^Symbole/)];
+        isinOf[sym] = r[colOf(instr, /^ID Titre/)] || null;
+        nameOf[sym] = r[colOf(instr, /^Description/)] || sym;
+      });
+
+      const notes = [];
+      const po = sec("Positions ouvertes");
+      const ci = (re) => colOf(po, re);
+      const positions = po.rows.filter((r) => r[ci(/^DataDiscriminator/)] === "Summary").map((r) => {
+        const cur = r[ci(/^Devise/)], sym = r[ci(/^Symbole/)], rate = fx[cur];
+        if (!rate) notes.push(`Pas de taux ${cur} dans le relevé : ${sym} gardé en devise locale`);
+        const k = rate || 1;
+        return {
+          name: nameOf[sym] || sym, isin: isinOf[sym] || null, ticker: sym, quantity: num(r[ci(/^Quantit/)]),
+          costBasisEUR: num(r[ci(/^Coût$/)]) * k, priceEUR: num(r[ci(/^Cours de cl/)]) * k,
+          currency: cur, valueEUR: num(r[ci(/^Valeur/)]) * k,
+        };
+      });
+
+      const tx = sec("Transactions");
+      const ti = (re) => colOf(tx, re);
+      const trades = tx.rows.filter((r) => r[ti(/^DataDiscriminator/)] === "Order").map((r) => {
+        const cur = r[ti(/^Devise/)], sym = r[ti(/^Symbole/)], k = fx[cur] || 1;
+        const quantity = num(r[ti(/^Quantit/)]), proceeds = num(r[ti(/^Produit/)]), comm = num(r[ti(/^Comm/)]) || 0;
+        const when = r[ti(/^Date/)];
+        return {
+          id: ["ibkr", sym, when, quantity, r[ti(/^Prix trans/)]].join("|"),
+          date: toIsoDay(when), ts: String(when || "").replace(/^\d{4}-\d{2}-\d{2},?\s*/, ""), name: nameOf[sym] || sym, isin: isinOf[sym] || null, ticker: sym, quantity,
+          priceEUR: num(r[ti(/^Prix trans/)]) * k, amountEUR: (proceeds + comm) * k, fees: Math.abs(comm * k),
+        };
+      });
+
+      // Versements / retraits : section « Dépôts et retraits » quand il y en a eu sur la période
+      const dep = sec("Dépôts et retraits");
+      const di = (re) => colOf(dep, re);
+      const deposits = dep.rows
+        .filter((r) => r[di(/^Devise/)] && !/^Total/i.test(r[di(/^Devise/)]))
+        .map((r) => {
+          const k = fx[r[di(/^Devise/)]] || 1;
+          return { date: toIsoDay(r[di(/^Date/)]), amountEUR: num(r[di(/^Montant/)]) * k, label: r[di(/^Description/)] || "Dépôt / retrait" };
+        })
+        .filter((d) => d.amountEUR);
+
+      return { broker: "Interactive Brokers", account: "ibkr", date, value, deposits, positions, trades, notes: notes.join(" · ") };
+    }
+
+    // Lit un relevé : IBKR (CSV) et Degiro « Transactions » en local, tout le reste (PDF, Excel, CSV, capture) via Claude
+    async function readStatement(file, apiKey) {
+      const lower = file.name.toLowerCase();
+      if (!/\.(xlsx?|pdf|png|jpe?g|webp)$/.test(lower)) {
+        const ibkr = parseIbkrActivity(await file.text());
+        if (ibkr) return ibkr;
+      }
+      if (!lower.endsWith(".pdf") && !/\.(png|jpe?g|webp)$/.test(lower)) {
+        try {
+          const { headers, rows } = await readFileAsRows(file);
+          const pf = parseDegiroPortfolio(headers, rows);
+          if (pf) return { broker: "Degiro (portefeuille)", account: "cto", date: new Date().toISOString().slice(0, 10), value: pf.value, deposits: [], positions: pf.positions, trades: [], notes: "Date du relevé = aujourd'hui (l'export Degiro n'en porte pas) : corrige-la si besoin." };
+          const trades = parseDegiroTransactions(headers, rows);
+          if (trades && trades.length) {
+            const date = trades.reduce((m, tr) => (tr.date > m ? tr.date : m), "");
+            return { broker: "Degiro (transactions)", account: "cto", date, value: null, deposits: [], positions: [], trades, notes: "" };
+          }
+        } catch (e) { /* format non reconnu : on passe par Claude */ }
+      }
+      if (!apiKey) throw new Error("format non reconnu localement : enregistrez votre clé API Claude (bouton « Demander à Claude ») pour lire ce relevé");
+      const r = await extractStatementWithClaude(apiKey, file);
+      return {
+        broker: r.broker,
+        account: r.account === "inconnu" ? "" : r.account,
+        date: toIsoDay(r.statementDate),
+        value: r.accountValueEUR,
+        deposits: (r.deposits || []).map((d) => ({ ...d, date: toIsoDay(d.date) })),
+        positions: r.positions || [],
+        trades: (r.trades || []).map((tr) => ({
+          id: tr.orderId ? `${r.broker}|${tr.orderId}|${tr.quantity}|${tr.amountEUR}` : `${r.broker}|${tr.date}|${tr.isin || tr.name}|${tr.quantity}|${tr.amountEUR}`,
+          date: toIsoDay(tr.date), name: tr.name, isin: tr.isin, ticker: tr.ticker, quantity: tr.quantity,
+          priceEUR: tr.priceEUR ?? (tr.quantity ? Math.abs(tr.amountEUR) / Math.abs(tr.quantity) : 0),
+          amountEUR: tr.amountEUR, fees: tr.fees || 0,
+        })),
+        notes: r.notes || "",
+      };
+    }
+
+    const sameSecurity = (p, s) =>
+      (s.isin && (p.isin === s.isin || p.ticker === s.isin)) || (s.ticker && p.ticker && p.ticker.split(".")[0] === s.ticker.split(".")[0]);
+
+    // Remplace les positions d'un compte par celles d'un relevé, en gardant catégorie et secteur déjà saisis
+    function positionsFromStatement(accountId, list, previous) {
+      return list.filter((s) => s.quantity).map((s, i) => {
+        const prev = previous.find((p) => p.accountId === accountId && sameSecurity(p, s));
+        const known = KNOWN_SECURITIES[s.isin] || KNOWN_SECURITIES[s.ticker] || {};
+        const price = s.priceEUR ?? (s.valueEUR != null ? s.valueEUR / s.quantity : prev?.lastPrice ?? 0);
+        return {
+          id: prev?.id || `${accountId}-${s.isin || s.ticker || i}-${Date.now()}`,
+          accountId,
+          ticker: s.ticker || s.isin || s.name.split(" ")[0].toUpperCase().slice(0, 12),
+          isin: s.isin || prev?.isin || null,
+          name: s.name,
+          quantity: s.quantity,
+          costBasis: s.costBasisEUR ?? prev?.costBasis ?? 0,
+          lastPrice: price, // prix en euros, comme le reste de l'app ; currency = devise de cotation
+          currency: s.currency || prev?.currency || "EUR",
+          category: prev?.category || known.category || "Non classé",
+          sector: prev?.sector || known.sector || "Non classé",
+        };
+      });
+    }
+
+    // Applique des achats/ventes aux positions d'un compte (PRU moyen pondéré, frais compris)
+    function applyTradesToPositions(positions, accountId, trades) {
+      const list = positions.map((p) => ({ ...p }));
+      const warnings = [];
+      [...trades].sort((a, b) => (a.date + (a.ts || "")).localeCompare(b.date + (b.ts || ""))).forEach((tr, i) => {
+        const idx = list.findIndex((p) => p.accountId === accountId && sameSecurity(p, tr));
+        if (tr.quantity > 0) {
+          let p = list[idx];
+          if (!p) {
+            const known = KNOWN_SECURITIES[tr.isin] || KNOWN_SECURITIES[tr.ticker] || {};
+            p = { id: `${accountId}-${tr.isin || tr.ticker || i}-${Date.now()}`, accountId, ticker: tr.isin || tr.ticker || tr.name, isin: tr.isin || null,
+              name: tr.name, quantity: 0, costBasis: 0, lastPrice: tr.priceEUR, currency: "EUR",
+              category: known.category || "Non classé", sector: known.sector || "Non classé" };
+            list.push(p);
+          }
+          const q = p.quantity + tr.quantity;
+          p.costBasis = q ? (p.quantity * (p.costBasis || 0) + Math.abs(tr.amountEUR)) / q : 0;
+          p.quantity = q;
+          if (tr.priceEUR) p.lastPrice = tr.priceEUR;
+        } else {
+          if (idx < 0) { warnings.push(`Vente de ${tr.name} (${tr.date}) sans position connue sur ce compte`); return; }
+          const p = list[idx];
+          p.quantity += tr.quantity;
+          if (tr.priceEUR) p.lastPrice = tr.priceEUR;
+          if (p.quantity <= 1e-6) {
+            if (p.quantity < -1e-6) warnings.push(`${tr.name} : la vente dépasse la quantité connue`);
+            list.splice(idx, 1);
+          }
+        }
+      });
+      return { positions: list, warnings };
+    }
+
+    // Code échangé avec l'artifact « Suivi hebdo bourse » (copier-coller)
+    function buildHebdoSyncCode({ date, byAccount, flows, positions, trades }) {
+      const accountsOut = {};
+      Object.entries(HEBDO_KEYS).forEach(([a, h]) => { accountsOut[h] = { v: Math.round(byAccount?.[a] || 0), f: Math.round(flows?.[a] || 0) }; });
+      return JSON.stringify({
+        app: "patrimoine", v: 1, date, generatedAt: new Date().toISOString(),
+        accounts: accountsOut,
+        positions: positions.filter((p) => HEBDO_KEYS[p.accountId]).map((p) => ({
+          compte: HEBDO_KEYS[p.accountId], ticker: p.ticker, isin: p.isin || null, name: p.name,
+          quantity: p.quantity, costBasis: p.costBasis, lastPrice: p.lastPrice, currency: p.currency,
+          category: p.category, sector: p.sector,
+        })),
+        trades: (trades || []).map((tr) => ({ ...tr, compte: HEBDO_KEYS[tr.accountId] || tr.accountId })),
+      });
+    }
+
+    function parseHebdoCode(text) {
+      const data = JSON.parse(text.trim());
+      if (data?.app !== "suivi-hebdo" || !Array.isArray(data.entries)) throw new Error("ce n'est pas un code copié depuis Suivi hebdo bourse");
+      return data.entries.filter((e) => e.date && e.accounts).sort((a, b) => a.date.localeCompare(b.date));
+    }
+
+    const fmtEUR =(v) => new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(v || 0);
     const fmtEURcents = (v) => new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format(v || 0);
     const fmtPct = (v) => `${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)} %`;
     const fmtDate = (iso) => new Date(iso).toLocaleDateString("fr-FR", { day: "2-digit", month: "short" });
@@ -1910,7 +2285,123 @@
       );
     }
 
-  function MonthlySnapshotModal({ open, onClose, onSave, lastByAccount, onImportPositions, pendingTransfers = [] }) {
+    // Dépôt des relevés de courtier + récupération du Suivi hebdo, dans le point mensuel
+    function StatementsPanel({ uid, statements, setStatements, onHebdo, lastMonthlyDate, appliedTradeIds }) {
+      const t = useTheme();
+      const [apiKey, setApiKey] = useState(null);
+      const [hebdoText, setHebdoText] = useState("");
+      const [hebdoMsg, setHebdoMsg] = useState(null);
+      const [showHebdo, setShowHebdo] = useState(false);
+
+      useEffect(() => {
+        if (!uid) { setApiKey(""); return; }
+        getDoc(claudeKeyRef(uid)).then((s) => setApiKey(s.exists() ? s.data().apiKey || "" : "")).catch(() => setApiKey(""));
+      }, [uid]);
+
+      const addFiles = async (files) => {
+        for (const file of files) {
+          const id = `${file.name}-${file.size}-${Date.now()}`;
+          setStatements((s) => [...s, { id, fileName: file.name, status: "lecture" }]);
+          try {
+            const r = await readStatement(file, apiKey);
+            setStatements((s) => s.map((x) => (x.id === id ? { ...x, status: "ok", ...r, excludedDeposits: [] } : x)));
+          } catch (e) {
+            setStatements((s) => s.map((x) => (x.id === id ? { ...x, status: "erreur", error: e.message || "lecture impossible" } : x)));
+          }
+        }
+      };
+      const patch = (id, p) => setStatements((s) => s.map((x) => (x.id === id ? { ...x, ...p } : x)));
+
+      const applyHebdo = () => {
+        try {
+          const entries = parseHebdoCode(hebdoText);
+          if (!entries.length) throw new Error("aucun relevé dans ce code");
+          setHebdoMsg(onHebdo(entries));
+          setHebdoText("");
+        } catch (e) {
+          setHebdoMsg({ error: e.message?.startsWith("Unexpected") ? "code illisible : recopie-le en entier depuis Suivi hebdo" : e.message });
+        }
+      };
+
+      const box = { background: t.panelAlt, border: `1px solid ${t.border}` };
+      return (
+        <div className="space-y-3 mb-4">
+          <div className="rounded-xl p-3" style={box}>
+            <div className="text-sm font-medium flex items-center gap-2" style={{ color: t.text }}><Upload size={14} /> Relevés des comptes bourse</div>
+            <p className="text-xs mt-1" style={{ color: t.textMuted }}>
+              Dépose tes relevés (IBKR CSV, Degiro, Bourse Direct, PDF, Excel…). Les valeurs des comptes, les positions et les versements sont repris automatiquement.
+              {apiKey === "" && " Les formats autres qu'IBKR CSV et Degiro Transactions demandent ta clé API Claude (bouton « Demander à Claude »)."}
+            </p>
+            <input type="file" multiple onChange={(e) => { addFiles([...e.target.files]); e.target.value = ""; }}
+              className="text-xs mt-2" style={{ color: t.text }} />
+            <div className="space-y-2 mt-2">
+              {statements.map((s) => {
+                if (s.status !== "ok") return (
+                  <div key={s.id} className="text-xs rounded p-2 flex items-center justify-between gap-2" style={{ border: `1px solid ${t.border}` }}>
+                    <span style={{ color: t.text }}>{s.fileName}</span>
+                    <span style={{ color: s.status === "erreur" ? t.loss : t.textMuted }}>{s.status === "erreur" ? s.error : "Lecture…"}</span>
+                    <button onClick={() => setStatements((l) => l.filter((x) => x.id !== s.id))}><X size={12} color={t.textMuted} /></button>
+                  </div>
+                );
+                const newTrades = s.trades.filter((tr) => !appliedTradeIds.includes(tr.id));
+                return (
+                  <div key={s.id} className="text-xs rounded p-2 space-y-1" style={{ border: `1px solid ${t.border}` }}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium" style={{ color: t.text }}>{s.broker} · {s.date ? fmtDate(s.date) : "date ?"}</span>
+                      <button onClick={() => setStatements((l) => l.filter((x) => x.id !== s.id))} title="Retirer"><X size={12} color={t.textMuted} /></button>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2" style={{ color: t.textMuted }}>
+                      <select value={s.account} onChange={(e) => patch(s.id, { account: e.target.value })} className="rounded px-1 py-0.5"
+                        style={{ background: t.panel, color: s.account ? t.text : t.loss, border: `1px solid ${t.border}` }}>
+                        <option value="">Compte ?</option>
+                        {BOURSE_ACCOUNTS.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                      </select>
+                      {s.value != null && <span>valeur <b style={{ color: t.text }}>{fmtEUR(s.value)}</b></span>}
+                      {s.positions.length > 0 && <span>{s.positions.length} positions</span>}
+                      {s.trades.length > 0 && <span>{s.trades.length} ordres{s.positions.length ? "" : ` (${newTrades.length} nouveaux)`}</span>}
+                    </div>
+                    {s.deposits.map((d, i) => {
+                      const old = lastMonthlyDate && d.date && d.date <= lastMonthlyDate.slice(0, 10);
+                      const off = old || s.excludedDeposits.includes(i);
+                      return (
+                        <label key={i} className="flex items-center gap-2 cursor-pointer" style={{ color: old ? t.textMuted : t.text }}>
+                          <input type="checkbox" checked={!off} disabled={old}
+                            onChange={() => patch(s.id, { excludedDeposits: off ? s.excludedDeposits.filter((x) => x !== i) : [...s.excludedDeposits, i] })} />
+                          Versement {fmtDate(d.date)} · {d.label} · {fmtEUR(d.amountEUR)}{old ? " (déjà dans le point précédent)" : ""}
+                        </label>
+                      );
+                    })}
+                    {s.notes && <p style={{ color: t.warning }}>{s.notes}</p>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="rounded-xl p-3" style={box}>
+            <button type="button" onClick={() => setShowHebdo((v) => !v)} className="w-full text-sm font-medium flex items-center gap-2 text-left" style={{ color: t.text }}>
+              <Link2 size={14} /> Récupérer depuis Suivi hebdo bourse
+              {showHebdo ? <ChevronDown size={14} className="ml-auto" /> : <ChevronRight size={14} className="ml-auto" />}
+            </button>
+            {showHebdo && (
+              <div className="mt-2 space-y-2">
+                <p className="text-xs" style={{ color: t.textMuted }}>
+                  Dans l'artifact Suivi hebdo bourse, touche « Copier pour Patrimoine », puis colle le code ici : les valeurs de Degiro, IBKR et des deux PEA
+                  au dernier relevé hebdo, et les virements depuis le point précédent, sont repris.
+                </p>
+                <textarea value={hebdoText} onChange={(e) => setHebdoText(e.target.value)} rows={3} placeholder='{"app":"suivi-hebdo",…}'
+                  className="w-full rounded px-2 py-1 text-xs" style={{ background: t.panel, color: t.text, border: `1px solid ${t.border}`, fontFamily: "ui-monospace, monospace" }} />
+                <button onClick={applyHebdo} disabled={!hebdoText.trim()} className="px-3 py-1 rounded text-xs"
+                  style={{ background: t.accent, color: t.onAccent, opacity: hebdoText.trim() ? 1 : 0.5 }}>Appliquer</button>
+              </div>
+            )}
+            {hebdoMsg && <p className="text-xs mt-1" style={{ color: hebdoMsg.error ? t.loss : t.gain }}>{hebdoMsg.error || hebdoMsg.info}</p>}
+          </div>
+        </div>
+      );
+    }
+
+  function MonthlySnapshotModal({ open, onClose, onSave, lastByAccount, onImportPositions, pendingTransfers = [], uid, lastMonthlyDate, appliedTradeIds = [] }) {
       const t = useTheme();
       const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
       const [periode, setPeriode] = useState(() => periodeFromDate(new Date().toISOString()));
@@ -1921,6 +2412,62 @@
         return init;
       });
       const [includedTransferIds, setIncludedTransferIds] = useState(() => pendingTransfers.map(tr => tr.id));
+      const [statements, setStatements] = useState([]);
+      const [hebdoFlows, setHebdoFlows] = useState({});
+      const [hebdoFlowsOn, setHebdoFlowsOn] = useState(true);
+      const appliedValues = useRef(new Set());
+
+      // Un relevé lu fixe la valeur de son compte (une seule fois, l'utilisateur garde la main ensuite)
+      useEffect(() => {
+        statements.forEach((s) => {
+          const key = `${s.id}|${s.account}`;
+          if (s.status === "ok" && s.account && s.value != null && !appliedValues.current.has(key)) {
+            appliedValues.current.add(key);
+            setByAccount((b) => ({ ...b, [s.account]: Math.round(s.value) }));
+          }
+        });
+        const latest = statements.filter((s) => s.status === "ok" && s.date).map((s) => s.date).sort().pop();
+        if (latest && !periodeTouched) { setDate(latest); setPeriode(periodeFromDate(latest)); }
+      }, [statements]);
+
+      const applyHebdo = (entries) => {
+        const upTo = entries.filter((e) => e.date <= date);
+        const last = (upTo.length ? upTo : entries)[(upTo.length ? upTo : entries).length - 1];
+        const since = lastMonthlyDate ? lastMonthlyDate.slice(0, 10) : "";
+        const flows = {};
+        entries.filter((e) => e.date > since && e.date <= last.date).forEach((e) => {
+          Object.entries(e.accounts).forEach(([h, x]) => {
+            const a = HEBDO_TO_ACCOUNT[h];
+            if (a && x?.f) flows[a] = (flows[a] || 0) + Number(x.f);
+          });
+        });
+        setByAccount((b) => {
+          const nb = { ...b };
+          Object.entries(last.accounts).forEach(([h, x]) => { const a = HEBDO_TO_ACCOUNT[h]; if (a && x?.v != null) nb[a] = Math.round(x.v); });
+          return nb;
+        });
+        setHebdoFlows(flows);
+        if (!periodeTouched) { setDate(last.date); setPeriode(periodeFromDate(last.date)); }
+        const nFlows = Object.keys(flows).length;
+        return { info: `Relevé hebdo du ${fmtDate(last.date)} repris${nFlows ? ` · virements sur ${nFlows} compte(s)` : ""}.` };
+      };
+
+      const statementFlows = useMemo(() => {
+        const f = {};
+        const since = lastMonthlyDate ? lastMonthlyDate.slice(0, 10) : "";
+        statements.filter((s) => s.status === "ok" && s.account).forEach((s) => {
+          s.deposits.forEach((d, i) => {
+            if (s.excludedDeposits.includes(i) || (d.date && d.date <= since)) return;
+            f[s.account] = (f[s.account] || 0) + d.amountEUR;
+          });
+        });
+        return f;
+      }, [statements, lastMonthlyDate]);
+      // Un compte couvert par un relevé de courtier prend ses versements dans le relevé, pas dans le suivi hebdo
+      const coveredByStatement = new Set(statements.filter((s) => s.status === "ok" && s.account).map((s) => s.account));
+      const hebdoFlowsUsed = hebdoFlowsOn
+        ? Object.fromEntries(Object.entries(hebdoFlows).filter(([a]) => !coveredByStatement.has(a)))
+        : {};
 
       const total = Object.values(byAccount).reduce((s, v) => s + (Number(v) || 0), 0);
 
@@ -1945,10 +2492,15 @@
              }
            }
         });
+        [statementFlows, hebdoFlowsUsed].forEach((src) =>
+          Object.entries(src).forEach(([a, v]) => { flows[a] = Math.round((flows[a] || 0) + v); }));
         return flows;
-      }, [includedTransferIds, pendingTransfers]);
+      }, [includedTransferIds, pendingTransfers, statementFlows, JSON.stringify(hebdoFlowsUsed)]);
 
       if (!open) return null;
+
+      const readyStatements = statements.filter((s) => s.status === "ok" && s.account);
+      const unassigned = statements.some((s) => s.status === "ok" && !s.account);
 
       const handleSave = () => {
         onSave({
@@ -1960,7 +2512,8 @@
           transferIds: includedTransferIds,
           totalWealth: Math.round(total),
           source: "mixte",
-        }, includedTransferIds);
+          ...(readyStatements.length ? { statements: readyStatements.map((s) => ({ broker: s.broker, account: s.account, date: s.date, fileName: s.fileName })) } : {}),
+        }, includedTransferIds, readyStatements);
         onClose();
       };
 
@@ -1988,6 +2541,20 @@
                   className="w-full mt-1 rounded px-3 py-2 text-sm" style={{ background: t.panelAlt, color: t.text, border: `1px solid ${t.border}` }} />
               </div>
             </div>
+
+            <StatementsPanel uid={uid} statements={statements} setStatements={setStatements} onHebdo={applyHebdo}
+              lastMonthlyDate={lastMonthlyDate} appliedTradeIds={appliedTradeIds} />
+
+            {Object.keys(hebdoFlows).length > 0 && (
+              <label className="flex items-start gap-2 text-xs rounded p-2 mb-3 cursor-pointer" style={{ background: t.panelAlt, border: `1px solid ${t.border}`, color: t.text }}>
+                <input type="checkbox" checked={hebdoFlowsOn} onChange={() => setHebdoFlowsOn((v) => !v)} className="mt-0.5" />
+                <span>
+                  Virements du suivi hebdo depuis le point précédent :{" "}
+                  {Object.entries(hebdoFlows).map(([a, v]) => `${accounts.find((x) => x.id === a)?.name} ${fmtEUR(v)}${coveredByStatement.has(a) ? " (ignoré : pris dans le relevé)" : ""}`).join(" · ")}
+                  {pendingTransfers.length > 0 && <span style={{ color: t.warning }}> — décoche si ces virements sont déjà dans la liste ci-dessous</span>}
+                </span>
+              </label>
+            )}
 
             <div className="space-y-2">
               {accounts.map((a) => (
@@ -2029,17 +2596,59 @@
               <div className="flex justify-between"><span style={{ color: t.textMuted }}>Patrimoine total du point</span><span style={{ color: t.text, fontFamily: "ui-monospace, monospace" }}>{fmtEUR(total)}</span></div>
             </div>
 
+            {Object.keys(computedFlows).length > 0 && (
+              <div className="rounded p-3 text-xs mt-2" style={{ background: t.panelAlt, border: `1px solid ${t.border}`, color: t.textMuted }}>
+                Mouvements du mois : {Object.entries(computedFlows).map(([a, v]) => `${transferAccountName(a)} ${fmtEUR(v)}`).join(" · ")}
+              </div>
+            )}
+
+            {unassigned && <p className="text-xs mt-3" style={{ color: t.loss }}>Choisis le compte de chaque relevé avant d'enregistrer.</p>}
             <button
               onClick={handleSave}
+              disabled={unassigned || statements.some((s) => s.status === "lecture")}
               className="w-full mt-4 rounded-xl py-3 text-sm font-semibold sticky bottom-0"
-              style={{ background: t.accent, color: t.onAccent, boxShadow: `0 -8px 20px ${t.panel}` }}
+              style={{ background: t.accent, color: t.onAccent, boxShadow: `0 -8px 20px ${t.panel}`, opacity: unassigned || statements.some((s) => s.status === "lecture") ? 0.5 : 1 }}
             >
-              Enregistrer le point mensuel
+              Enregistrer le point mensuel{readyStatements.length ? " et mettre à jour les positions" : ""}
             </button>
           </div>
         </div>
       );
     }
+    // Code à coller dans l'artifact « Suivi hebdo bourse » (met à jour le relevé hebdo et les positions lues par les briefings)
+    function SyncCodeModal({ data, onClose }) {
+      const t = useTheme();
+      const [copied, setCopied] = useState(false);
+      const areaRef = useRef(null);
+      if (!data) return null;
+      const copy = async () => {
+        try { await navigator.clipboard.writeText(data.code); setCopied(true); }
+        catch { areaRef.current?.select(); }
+      };
+      return (
+        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center md:p-4" style={{ background: "rgba(0,0,0,0.55)" }} onClick={onClose}>
+          <div className="w-full max-w-lg rounded-t-3xl md:rounded-2xl p-5 md:p-6 space-y-3" style={{ background: t.panel, border: `1px solid ${t.border}` }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 style={{ color: t.text }}>Envoyer vers Suivi hebdo bourse</h3>
+              <button onClick={onClose}><X size={18} color={t.textMuted} /></button>
+            </div>
+            <p className="text-sm" style={{ color: t.textMuted }}>
+              Copie ce code puis colle-le dans l'artifact Suivi hebdo bourse, case « Importer depuis Patrimoine ». Il y enregistre le relevé du{" "}
+              {new Date(data.date).toLocaleDateString("fr-FR")} pour Degiro, IBKR et les deux PEA, et les positions à jour que lisent les briefings quotidiens.
+            </p>
+            {data.warnings?.length > 0 && (
+              <div className="text-xs rounded p-2" style={{ color: t.warning, border: `1px solid ${t.warning}55` }}>{data.warnings.join(" · ")}</div>
+            )}
+            <textarea ref={areaRef} readOnly value={data.code} rows={5} onFocus={(e) => e.target.select()}
+              className="w-full rounded px-2 py-1 text-xs" style={{ background: t.panelAlt, color: t.text, border: `1px solid ${t.border}`, fontFamily: "ui-monospace, monospace" }} />
+            <button onClick={copy} className="w-full rounded-xl py-3 text-sm font-semibold flex items-center justify-center gap-2" style={{ background: t.accent, color: t.onAccent }}>
+              {copied ? <><Check size={16} /> Copié</> : "Copier le code"}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     function DeleteButton({ onConfirm, title }) {
       const t = useTheme();
       const [armed, setArmed] = useState(false);
@@ -2623,6 +3232,10 @@ Méthode de calcul de l'application :
       const [weeklyArchive, setWeeklyArchive] = useState([]);
       const [transfers, setTransfers] = useState(initialTransfers);
       const [recurringTransfers, setRecurringTransfers] = useState([]);
+      // Journal des ordres lus dans les relevés (sert au suivi hebdo / briefings) et identifiants déjà appliqués
+      const [tradeLog, setTradeLog] = useState([]);
+      const [appliedTradeIds, setAppliedTradeIds] = useState([]);
+      const [syncCode, setSyncCode] = useState(null);
       const [monthlyModalOpen, setMonthlyModalOpen] = useState(false);
       const [monthlyModalKey, setMonthlyModalKey] = useState(0);
       const [tab, setTab] = useState("dashboard");
@@ -2661,6 +3274,8 @@ Méthode de calcul de l'application :
               if (saved.weekly) setWeeklyArchive(saved.weekly);
               if (saved.transfers) setTransfers(saved.transfers);
               if (saved.recurringTransfers) setRecurringTransfers(saved.recurringTransfers);
+              if (saved.tradeLog) setTradeLog(saved.tradeLog);
+              if (saved.appliedTradeIds) setAppliedTradeIds(saved.appliedTradeIds);
             }
           } catch (e) {
             console.error("Erreur de chargement Firebase:", e);
@@ -2681,6 +3296,8 @@ Méthode de calcul de l'application :
               weekly: weeklyArchive,
               transfers,
               recurringTransfers,
+              tradeLog,
+              appliedTradeIds,
               seedVersion: SEED_VERSION,
               derniereMiseAJour: new Date().toISOString()
             });
@@ -2692,7 +3309,7 @@ Méthode de calcul de l'application :
           }
         }, 800); 
         return () => clearTimeout(delai);
-      }, [positions, monthly, weeklyArchive, transfers, recurringTransfers, loaded]);
+      }, [positions, monthly, weeklyArchive, transfers, recurringTransfers, tradeLog, appliedTradeIds, loaded]);
 
       const handleReset = () => {
         setPositions(stockPositions);
@@ -2700,10 +3317,12 @@ Méthode de calcul de l'application :
         setWeeklyArchive([]);
         setTransfers(initialTransfers);
         setRecurringTransfers([]);
+        setTradeLog([]);
+        setAppliedTradeIds([]);
       };
 
       const handleExport = () => {
-        const payload = { positions, monthly, weekly: weeklyArchive, transfers, recurringTransfers, seedVersion: SEED_VERSION, exportedAt: new Date().toISOString() };
+        const payload = { positions, monthly, weekly: weeklyArchive, transfers, recurringTransfers, tradeLog, appliedTradeIds, seedVersion: SEED_VERSION, exportedAt: new Date().toISOString() };
         const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -2724,6 +3343,8 @@ Méthode de calcul de l'application :
           if (data.weekly) setWeeklyArchive(data.weekly);
           if (data.transfers) setTransfers(data.transfers);
           if (data.recurringTransfers) setRecurringTransfers(data.recurringTransfers);
+          if (data.tradeLog) setTradeLog(data.tradeLog);
+          if (data.appliedTradeIds) setAppliedTradeIds(data.appliedTradeIds);
         } catch (e) {
           alert("Fichier de sauvegarde illisible");
         }
@@ -2786,11 +3407,52 @@ Méthode de calcul de l'application :
         [transfers]
       );
 
-      const handleSaveMonthly = (snap, consumedTransferIds) => {
+      const handleSaveMonthly = (snap, consumedTransferIds, statements = []) => {
         setMonthly((m) => [...m, snap]);
         if (consumedTransferIds?.length) {
           setTransfers((trs) => trs.map((tr) => consumedTransferIds.includes(tr.id) ? { ...tr, consumedMonthly: true } : tr));
         }
+        // Relevés de courtier : positions complètes => remplacement ; sinon on applique les ordres pas encore vus
+        let nextPositions = positions;
+        const applied = new Set(appliedTradeIds);
+        const newLog = [];
+        const warnings = [];
+        [...statements].sort((a, b) => (a.date || "").localeCompare(b.date || "")).forEach((st) => {
+          const fresh = st.trades.filter((tr) => !applied.has(tr.id));
+          if (st.positions.length) {
+            nextPositions = [...nextPositions.filter((p) => p.accountId !== st.account), ...positionsFromStatement(st.account, st.positions, nextPositions)];
+          } else if (fresh.length) {
+            const r = applyTradesToPositions(nextPositions, st.account, fresh);
+            nextPositions = r.positions;
+            warnings.push(...r.warnings);
+          }
+          fresh.forEach((tr) => { applied.add(tr.id); newLog.push({ ...tr, accountId: st.account }); });
+        });
+        if (statements.length) {
+          setPositions(nextPositions);
+          setAppliedTradeIds([...applied].slice(-3000));
+          setTradeLog((l) => [...l, ...newLog].sort((a, b) => a.date.localeCompare(b.date)).slice(-1000));
+        }
+        const since = lastMonthly?.date?.slice(0, 10) || "";
+        const periodTrades = [...tradeLog, ...newLog].filter((tr) => tr.date > since && tr.date <= snap.date.slice(0, 10));
+        setSyncCode({
+          code: buildHebdoSyncCode({ date: snap.date.slice(0, 10), byAccount: snap.byAccount, flows: snap.flows, positions: nextPositions, trades: periodTrades }),
+          warnings,
+          date: snap.date,
+        });
+      };
+      const openSyncCode = () => {
+        if (!lastMonthly) return;
+        const prev = monthlyEff[monthlyEff.length - 2];
+        const since = prev?.date?.slice(0, 10) || "";
+        setSyncCode({
+          code: buildHebdoSyncCode({
+            date: lastMonthly.date.slice(0, 10), byAccount: lastMonthly.byAccount, flows: lastMonthly.flows, positions,
+            trades: tradeLog.filter((tr) => tr.date > since && tr.date <= lastMonthly.date.slice(0, 10)),
+          }),
+          warnings: [],
+          date: lastMonthly.date,
+        });
       };
 
       // L'historique importé (source "csv") fait foi jusqu'à son dernier relevé : les saisies faites dans l'app
@@ -3109,7 +3771,9 @@ Méthode de calcul de l'application :
               )}
 
               {tab === "positions" && (
-                <Panel title={`Positions boursières (${positions.length} lignes)`}>
+                <Panel title={`Positions boursières (${positions.length} lignes)`}
+                  action={<button onClick={openSyncCode} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs"
+                    style={{ background: t.panelAlt, color: t.text, border: `1px solid ${t.border}` }}><Link2 size={13} /> Code pour Suivi hebdo</button>}>
                   <PositionsImport onImport={handleImportPositions} />
                   <PositionsTable
                     positions={positions}
@@ -3183,7 +3847,11 @@ Méthode de calcul de l'application :
             lastByAccount={lastMonthly?.byAccount}
             onImportPositions={handleImportPositions}
             pendingTransfers={pendingMonthlyTransfers}
+            uid={auth.currentUser?.uid}
+            lastMonthlyDate={lastMonthly?.date}
+            appliedTradeIds={appliedTradeIds}
           />
+          <SyncCodeModal data={syncCode} onClose={() => setSyncCode(null)} />
         </ThemeCtx.Provider>
       );
     }
