@@ -2765,8 +2765,22 @@ Méthode de calcul de l'application :
       const handleAddRecurring = (rt) => setRecurringTransfers((rts) => [...rts, rt]);
       const handleToggleRecurring = (id) => setRecurringTransfers((rts) => rts.map((rt) => (rt.id === id ? { ...rt, active: !rt.active } : rt)));
       const handleDeleteRecurring = (id) => setRecurringTransfers((rts) => rts.filter((rt) => rt.id !== id));
+      // Un fichier sans PRU ni catégorie ne doit pas effacer ceux déjà saisis pour la même ligne
       const handleImportPositions = (accountId, newPositions) =>
-        setPositions((prev) => [...prev.filter((p) => p.accountId !== accountId), ...newPositions]);
+        setPositions((prev) => {
+          const existing = prev.filter((p) => p.accountId === accountId);
+          const merged = newPositions.map((n) => {
+            const o = existing.find((p) => p.ticker === n.ticker || p.isin === n.ticker || p.name === n.name);
+            if (!o) return n;
+            return {
+              ...n,
+              costBasis: n.costBasis || o.costBasis,
+              category: n.category !== "Non classé" ? n.category : o.category,
+              sector: n.sector !== "Non classé" ? n.sector : o.sector,
+            };
+          });
+          return [...prev.filter((p) => p.accountId !== accountId), ...merged];
+        });
 
       // Met à jour intelligemment les virements "orphelins" si on supprime un historique
       useEffect(() => {
