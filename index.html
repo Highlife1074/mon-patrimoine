@@ -562,6 +562,17 @@
     const moisCourant = () => new Date().toISOString().slice(0, 7);
     const depenseCat = (m, cat) => Math.max(0, -((m && m.byCat[cat]) || 0));
 
+    // Budget d'une catégorie : nombre = budget mensuel (ancien format), { montant, periode: "an" } = budget annuel
+    function getLimit(limits, cat) {
+      const v = limits?.[cat];
+      if (typeof v === "number") return v > 0 ? { amount: v, annual: false } : null;
+      if (v && v.montant > 0) return { amount: v.montant, annual: v.periode === "an" };
+      return null;
+    }
+    // Dépenses d'une catégorie depuis le 1er janvier jusqu'au mois donné (inclus)
+    const depenseDepuisJanvier = (months, periode, cat) =>
+      months.filter((x) => x.periode.slice(0, 4) === periode.slice(0, 4) && x.periode <= periode).reduce((s, x) => s + depenseCat(x, cat), 0);
+
     // Analyse d'un mois : budgets dépassés / presque atteints, hausses par rapport aux 6 mois précédents
     function analyzeBudgetMonth(months, periode, limits) {
       const idx = months.findIndex((m) => m.periode === periode);
@@ -569,14 +580,19 @@
       const m = months[idx];
       const prev = months.slice(Math.max(0, idx - 6), idx);
       const avgOf = (cat) => (prev.length ? prev.reduce((s, x) => s + depenseCat(x, cat), 0) / prev.length : null);
-      const rows = Object.entries(limits || {})
-        .filter(([cat, limit]) => limit > 0 && budgetKind(cat) === "depense")
-        .map(([cat, limit]) => { const spent = depenseCat(m, cat); return { cat, limit, spent, ratio: spent / limit }; })
+      // Budget annuel : on compare le cumul depuis janvier au montant prévu pour l'année
+      const rows = Object.keys(limits || {})
+        .filter((cat) => getLimit(limits, cat) && budgetKind(cat) === "depense")
+        .map((cat) => {
+          const L = getLimit(limits, cat);
+          const spent = L.annual ? depenseDepuisJanvier(months, periode, cat) : depenseCat(m, cat);
+          return { cat, limit: L.amount, annual: L.annual, spent, ratio: spent / L.amount };
+        })
         .sort((a, b) => b.ratio - a.ratio);
       const over = rows.filter((r) => r.spent > r.limit).sort((a, b) => (b.spent - b.limit) - (a.spent - a.limit));
       const near = rows.filter((r) => r.spent <= r.limit && r.ratio >= 0.9);
-      const totalBudget = rows.reduce((s, r) => s + r.limit, 0);
-      const totalBudgeted = rows.reduce((s, r) => s + r.spent, 0);
+      const totalBudget = rows.filter((r) => !r.annual).reduce((s, r) => s + r.limit, 0);
+      const totalBudgeted = rows.filter((r) => !r.annual).reduce((s, r) => s + r.spent, 0);
       const hausses = BUDGET_CATEGORIES.filter((c) => c.kind === "depense")
         .map((c) => { const spent = depenseCat(m, c.id), avg = avgOf(c.id); return { cat: c.id, spent, avg, diff: avg === null ? 0 : spent - avg }; })
         .filter((r) => r.avg !== null && r.diff > Math.max(50, r.avg * 0.3) && !over.some((o) => o.cat === r.cat))
@@ -593,7 +609,7 @@
       const mois = monthLong(a.periode);
       if (!a.rows.length) return "";
       if (a.over.length) {
-        const det = a.over.slice(0, 3).map((r) => `${r.cat} +${fmtEUR(r.spent - r.limit)}`).join(", ") + (a.over.length > 3 ? `, et ${a.over.length - 3} autre${a.over.length > 4 ? "s" : ""}` : "");
+        const det = a.over.slice(0, 3).map((r) => `${r.cat}${r.annual ? " (annuel)" : ""} +${fmtEUR(r.spent - r.limit)}`).join(", ") + (a.over.length > 3 ? `, et ${a.over.length - 3} autre${a.over.length > 4 ? "s" : ""}` : "");
         return `⚠ ${mois} : ${a.over.length} budget${a.over.length > 1 ? "s" : ""} dépassé${a.over.length > 1 ? "s" : ""} (${det})`;
       }
       return `✓ ${mois} : tous les budgets respectés${a.near.length ? ` (${a.near.map((r) => r.cat).join(", ")} à plus de 90 %)` : ""}`;
@@ -3157,7 +3173,7 @@ Méthode de calcul de l'application :
           </label>
           <p className="text-xs mt-2" style={{ color: t.textMuted }}>
             Revolut : Compte → ⋯ → Relevé (PDF ou Excel), un par compte — joint compris. LCL : relevé de compte mensuel en PDF (espace client → Mes documents).
-            Les catégories sont devinées depuis le libellé ; quand vous en corrigez une, l'app retient le marchand pour les relevés suivants.
+            Les catégories sont devinées depuis le libellé ; quand vous en corrigez une, l'app vous demande s'il faut l'étendre aux opérations semblables.
           </p>
           {loading && <p className="text-xs mt-1" style={{ color: t.textMuted }}>Lecture…</p>}
           {info && <p className="text-xs mt-1" style={{ color: t.gain }}>{info}</p>}
@@ -3214,6 +3230,47 @@ Méthode de calcul de l'application :
       );
     }
 
+    function CategoryPrompt({ prompt, onOnlyThis, onRemember, onApplyAll }) {
+      const t = useTheme();
+      const { tx, cat, others } = prompt;
+      const btn = (primary) => ({ background: primary ? t.accent : t.panelAlt, color: primary ? t.onAccent : t.text, border: `1px solid ${primary ? t.accent : t.border}` });
+      return (
+        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center p-3" style={{ background: "rgba(0,0,0,0.55)" }} onClick={onOnlyThis}>
+          <div className="w-full max-w-lg rounded-2xl p-5 max-h-[85vh] overflow-y-auto" style={{ background: t.panel, border: `1px solid ${t.border}`, boxShadow: t.shadow }} onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-base font-semibold mb-1" style={{ color: t.text }}>Classer en « {cat} »</h3>
+            <p className="text-sm mb-3" style={{ color: t.textMuted }}>
+              « {tx.desc} » ({fmtEURcents(tx.amt)}, {new Date(tx.d).toLocaleDateString("fr-FR")}) est maintenant en <b style={{ color: t.text }}>{cat}</b>.
+              {others.length > 0
+                ? <> {others.length} autre{others.length > 1 ? "s" : ""} opération{others.length > 1 ? "s ont" : " a"} le même libellé. Que voulez-vous faire ?</>
+                : <> Faut-il classer ainsi les prochaines opérations au même libellé ?</>}
+            </p>
+            {others.length > 0 && (
+              <div className="rounded-xl mb-4 max-h-48 overflow-y-auto text-xs" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
+                {others.slice(0, 50).map((x) => (
+                  <div key={x.id} className="flex justify-between gap-3 px-3 py-1.5" style={{ borderBottom: `1px solid ${t.border}`, color: t.textMuted, ...NUM }}>
+                    <span>{new Date(x.d).toLocaleDateString("fr-FR")} · {x.cat}</span>
+                    <span style={{ color: t.text }}>{fmtEURcents(x.amt)}</span>
+                  </div>
+                ))}
+                {others.length > 50 && <div className="px-3 py-1.5" style={{ color: t.textMuted }}>… et {others.length - 50} autres</div>}
+              </div>
+            )}
+            <div className="flex flex-col gap-2">
+              <button onClick={onOnlyThis} className="w-full py-2.5 rounded-xl text-sm font-medium" style={btn(true)}>Seulement cette opération</button>
+              {others.length > 0 && (
+                <button onClick={onApplyAll} className="w-full py-2.5 rounded-xl text-sm" style={btn(false)}>
+                  Appliquer aussi aux {others.length} autre{others.length > 1 ? "s" : ""} et aux prochains relevés
+                </button>
+              )}
+              <button onClick={onRemember} className="w-full py-2.5 rounded-xl text-sm" style={btn(false)}>
+                {others.length > 0 ? "Ne pas toucher aux autres, mais retenir pour les prochains relevés" : "Oui, retenir pour les prochains relevés"}
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     function BudgetAnalysis({ analysis: a, onEditLimits }) {
       const t = useTheme();
       if (!a) return null;
@@ -3235,13 +3292,14 @@ Méthode de calcul de l'application :
           <ul className="space-y-1">
             {a.over.map((r) => line(
               <>
-                <span className="font-semibold" style={{ color: t.loss }}>{r.cat} : budget dépassé de {fmtEUR(r.spent - r.limit)}</span>
-                {" "}— {fmtEUR(r.spent)} dépensés pour {fmtEUR(r.limit)} prévus ({Math.round(r.ratio * 100)} %)
+                <span className="font-semibold" style={{ color: t.loss }}>{r.cat} : budget {r.annual ? "annuel " : ""}dépassé de {fmtEUR(r.spent - r.limit)}</span>
+                {" "}— {fmtEUR(r.spent)} dépensés{r.annual ? " depuis janvier" : ""} pour {fmtEUR(r.limit)} prévus{r.annual ? " sur l'année" : ""} ({Math.round(r.ratio * 100)} %)
               </>, t.text))}
             {a.near.map((r) => line(
-              <><span className="font-semibold" style={{ color: t.warning }}>{r.cat} : {Math.round(r.ratio * 100)} % du budget</span> — {fmtEUR(r.spent)} sur {fmtEUR(r.limit)}</>, t.text))}
+              <><span className="font-semibold" style={{ color: t.warning }}>{r.cat} : {Math.round(r.ratio * 100)} % du budget {r.annual ? "annuel" : ""}</span> — {fmtEUR(r.spent)} sur {fmtEUR(r.limit)}</>, t.text))}
             {a.rows.length > 0 && !a.over.length && !a.near.length && line(<>Tous les budgets sont respectés.</>, t.text)}
-            {a.rows.length > 0 && line(<>Catégories budgétées : {fmtEUR(a.totalBudgeted)} dépensés pour {fmtEUR(a.totalBudget)} prévus.</>)}
+            {a.totalBudget > 0 && line(<>Budgets mensuels : {fmtEUR(a.totalBudgeted)} dépensés pour {fmtEUR(a.totalBudget)} prévus ce mois-ci.</>)}
+            {a.rows.filter((r) => r.annual && r.spent <= r.limit && r.ratio < 0.9).map((r) => line(<>{r.cat} (budget annuel) : {fmtEUR(r.spent)} depuis janvier sur {fmtEUR(r.limit)} ({Math.round(r.ratio * 100)} %).</>))}
             {!a.rows.length && line(<>Aucun budget défini : fixez un montant par catégorie pour être alerté quand il est dépassé.</>)}
             {a.hausses.map((r) => line(<>{r.cat} : {fmtEUR(r.spent)}, soit {fmtEUR(r.diff)} de plus que votre moyenne ({fmtEUR(r.avg)}/mois).</>))}
             {a.avgDepenses !== null && line(
@@ -3254,17 +3312,25 @@ Méthode de calcul de l'application :
 
     function BudgetLimitsEditor({ limits, onSetLimit, months, onClose }) {
       const t = useTheme();
-      const last6 = months.filter((m) => m.periode < moisCourant()).slice(-6);
-      const avgOf = (cat) => (last6.length ? last6.reduce((s, m) => s + depenseCat(m, cat), 0) / last6.length : 0);
+      const last12 = months.filter((m) => m.periode < moisCourant()).slice(-12);
+      const avgOf = (cat) => (last12.length ? last12.reduce((s, m) => s + depenseCat(m, cat), 0) / last12.length : 0);
+      // Dépense « irrégulière » : présente au plus un mois sur deux (école, impôts, voyages…) → budget annuel conseillé
+      const irreguliere = (cat) => last12.filter((m) => depenseCat(m, cat) >= 1).length <= last12.length / 2;
       const cats = BUDGET_CATEGORIES.filter((c) => c.kind === "depense");
-      const total = cats.reduce((s, c) => s + (limits[c.id] || 0), 0);
+      const totMois = cats.reduce((s, c) => { const L = getLimit(limits, c.id); return s + (L && !L.annual ? L.amount : 0); }, 0);
+      const totAn = cats.reduce((s, c) => { const L = getLimit(limits, c.id); return s + (L && L.annual ? L.amount : 0); }, 0);
       const arrondi = (v) => (v < 100 ? Math.ceil(v / 10) * 10 : Math.ceil(v / 50) * 50);
       const input = { background: t.panel, color: t.text, border: `1px solid ${t.border}` };
       return (
-        <Panel title="Budgets mensuels par catégorie" subtitle={`Montant maximum par mois · total prévu : ${fmtEUR(total)} · moyenne calculée sur les ${last6.length} derniers mois terminés`}
+        <Panel title="Budgets par catégorie"
+          subtitle={`Par mois : ${fmtEUR(totMois)} · par an : ${fmtEUR(totAn)} · moyennes calculées sur les ${last12.length} derniers mois terminés. Choisissez « / an » pour les dépenses qui ne reviennent pas chaque mois (école, impôts, voyages…).`}
           action={<button onClick={onClose} className="p-1 rounded-lg" style={{ color: t.textMuted }} title="Fermer"><X size={16} /></button>}>
           <div className="flex flex-wrap gap-2 mb-3">
-            <button onClick={() => cats.forEach((c) => { const a = avgOf(c.id); if (!limits[c.id] && a >= 1) onSetLimit(c.id, arrondi(a)); })}
+            <button onClick={() => cats.forEach((c) => {
+                const a = avgOf(c.id);
+                if (getLimit(limits, c.id) || a < 1) return;
+                if (irreguliere(c.id)) onSetLimit(c.id, arrondi(a * 12), "an"); else onSetLimit(c.id, arrondi(a), "mois");
+              })}
               className="text-xs px-3 py-1.5 rounded-lg" style={{ background: t.accent, color: t.onAccent }}>
               Remplir les cases vides avec mes moyennes
             </button>
@@ -3272,14 +3338,30 @@ Méthode de calcul de l'application :
           <div className="space-y-1.5">
             {cats.map((c) => {
               const a = avgOf(c.id);
+              const L = getLimit(limits, c.id);
+              const annuel = L ? L.annual : irreguliere(c.id) && a >= 1;
               return (
                 <div key={c.id} className="flex items-center gap-2 text-sm">
                   <span className="flex-1 min-w-0 truncate" style={{ color: t.text }}>{c.id}</span>
-                  <span className="text-xs shrink-0 hidden sm:inline" style={{ color: t.textMuted, ...NUM }}>moy. {fmtEUR(a)}</span>
-                  <input type="number" inputMode="decimal" min="0" step="10" placeholder={a >= 1 ? String(arrondi(a)) : "—"}
-                    value={limits[c.id] ?? ""} onChange={(e) => onSetLimit(c.id, e.target.value === "" ? null : Math.max(0, Number(e.target.value)))}
+                  <span className="text-xs shrink-0 hidden sm:inline text-right" style={{ color: t.textMuted, ...NUM }}>
+                    moy. {fmtEUR(a)}/mois · {fmtEUR(a * 12)}/an
+                  </span>
+                  <input type="number" inputMode="decimal" min="0" step="10"
+                    placeholder={a >= 1 ? String(arrondi(annuel ? a * 12 : a)) : "—"}
+                    value={L ? L.amount : ""}
+                    onChange={(e) => onSetLimit(c.id, e.target.value === "" ? null : Math.max(0, Number(e.target.value)), annuel ? "an" : "mois")}
                     className="w-24 rounded-lg px-2 py-1 text-right text-sm" style={{ ...input, ...NUM }} />
-                  <span className="text-xs w-4" style={{ color: t.textMuted }}>€</span>
+                  <select value={annuel ? "an" : "mois"}
+                    onChange={(e) => {
+                      const per = e.target.value;
+                      // On convertit le montant saisi : × 12 vers l'annuel, ÷ 12 vers le mensuel
+                      if (L) onSetLimit(c.id, per === "an" ? L.amount * 12 : Math.round(L.amount / 12), per);
+                      else onSetLimit(c.id, null, per);
+                    }}
+                    className="rounded-lg px-1.5 py-1 text-xs" style={input}>
+                    <option value="mois">€ / mois</option>
+                    <option value="an">€ / an</option>
+                  </select>
                 </div>
               );
             })}
@@ -3336,12 +3418,16 @@ Méthode de calcul de l'application :
             const value = -(current.byCat[c.id] || 0);
             const avg = prev12.length ? prev12.reduce((s, m) => s - (m.byCat[c.id] || 0), 0) / prev12.length : null;
             // Budget : mensuel, ou multiplié par le nombre de mois en vue annuelle
-            const limit = limits[c.id] > 0 ? limits[c.id] * nMonths : null;
-            return { cat: c.id, value, avg, limit };
+            const L = getLimit(limits, c.id);
+            // Vue mensuelle : trait = budget mensuel ; un budget annuel est rappelé en texte (cumul depuis janvier)
+            // Vue annuelle : budget mensuel × nombre de mois, ou budget annuel tel quel
+            const limit = !L ? null : L.annual ? (annual ? L.amount : null) : L.amount * nMonths;
+            const annuelInfo = L && L.annual && !annual ? { amount: L.amount, ytd: depenseDepuisJanvier(months, current.periode, c.id) } : null;
+            return { cat: c.id, value, avg, limit, annuelInfo };
           })
-          .filter((r) => Math.abs(r.value) >= 0.5 || (r.avg && r.avg >= 1) || r.limit)
+          .filter((r) => Math.abs(r.value) >= 0.5 || (r.avg && r.avg >= 1) || r.limit || r.annuelInfo)
           .sort((a, b) => b.value - a.value);
-      }, [current, prev12, limits, nMonths]);
+      }, [current, prev12, limits, nMonths, months, annual]);
       const maxCat = Math.max(1, ...catRows.map((r) => Math.max(r.value, r.avg || 0, r.limit || 0)));
       const incomeRows = current ? BUDGET_CATEGORIES.filter((c) => c.kind === "revenu" && current.byCat[c.id]).map((c) => ({ cat: c.id, value: current.byCat[c.id] })) : [];
 
@@ -3486,6 +3572,7 @@ Méthode de calcul de l'application :
                         {fmtEUR(r.value)}
                         {annual && current.depenses > 0 && <span style={{ color: t.textMuted }}> · {Math.round((r.value / current.depenses) * 100)} % · {fmtEUR(r.value / nMonths)} / mois</span>}
                         {r.limit !== null && <span style={{ color: depasse ? t.loss : t.textMuted, fontWeight: depasse ? 600 : 400 }}> · budget {fmtEUR(r.limit)}{depasse ? ` (+${fmtEUR(r.value - r.limit)})` : ""}</span>}
+                        {r.annuelInfo && <span style={{ color: r.annuelInfo.ytd > r.annuelInfo.amount ? t.loss : t.textMuted, fontWeight: r.annuelInfo.ytd > r.annuelInfo.amount ? 600 : 400 }}> · {fmtEUR(r.annuelInfo.ytd)} / {fmtEUR(r.annuelInfo.amount)} sur l'année</span>}
                         {r.avg !== null && <span style={{ color: over ? t.warning : t.textMuted }}> · moy. {fmtEUR(r.avg)}{over ? " ▲" : ""}</span>}
                       </span>
                     </div>
@@ -3505,7 +3592,7 @@ Méthode de calcul de l'application :
           </Panel>
 
           <Panel title={`Opérations — ${periodLabel}${filterCat !== "all" ? ` · ${filterCat}` : ""} (${monthTx.length})`}
-            subtitle="Changer une catégorie l'applique aux autres opérations du même marchand et aux prochains relevés">
+            subtitle="Changer une catégorie ne modifie que la ligne choisie ; l'app vous demande ensuite s'il faut l'appliquer aux opérations au même libellé">
             <div className="flex flex-wrap items-center gap-2 mb-2 text-sm">
               <select value={filterCat} onChange={(e) => { setFilterCat(e.target.value); setTxLimit(200); }} className="rounded-lg px-2 py-1.5 text-sm" style={select}>
                 <option value="all">Toutes catégories</option>
@@ -3577,7 +3664,7 @@ Méthode de calcul de l'application :
           </Panel>
 
           {ruleEntries.length > 0 && (
-            <Panel title={`Marchands mémorisés (${ruleEntries.length})`} subtitle="Catégories que vous avez corrigées : elles s'appliquent automatiquement aux prochains relevés" collapsible defaultCollapsed>
+            <Panel title={`Marchands mémorisés (${ruleEntries.length})`} subtitle="Règles que vous avez demandé de retenir. Supprimer une règle (✕) remet les opérations concernées à leur catégorie automatique, sauf celles que vous avez classées à la main." collapsible defaultCollapsed>
               <div className="space-y-1">
                 {ruleEntries.map(([key, cat]) => (
                   <div key={key} className="flex items-center justify-between gap-3 text-xs py-1">
@@ -3822,7 +3909,7 @@ Méthode de calcul de l'application :
           </Panel>
 
           <Panel title={`Mouvements (${visible.length})${visibleTotals.out ? ` · sorties ${fmtEUR(visibleTotals.out)}` : ""}${visibleTotals.in ? ` · entrées ${fmtEUR(visibleTotals.in)}` : ""}`}
-            subtitle="Changer la catégorie d'une ligne la mémorise pour ce marchand ou cette personne ; la sélection multiple ne change que les lignes cochées">
+            subtitle="Changer une catégorie ne modifie que la ligne choisie, puis l'app vous demande s'il faut l'étendre aux opérations au même libellé ; la sélection multiple ne change que les lignes cochées">
               <div className="flex flex-wrap gap-2 mb-3">
                 <select value={filterKind} onChange={(e) => { setFilterKind(e.target.value); setFilterCat("all"); }} className="rounded-lg px-2 py-1.5 text-xs" style={select}>
                   <option value="all">Tous types</option>
@@ -4064,25 +4151,42 @@ Méthode de calcul de l'application :
         const alerte = focus ? budgetAlertText(analyzeBudgetMonth(moisApres, focus, budgetLimits)) : "";
         return { info: parts.join(" · "), warnings, focus, alerte };
       };
+      // Changer la catégorie d'une ligne ne touche que cette ligne ; on demande ensuite s'il faut l'étendre
+      // aux opérations au même libellé et la retenir pour les prochains relevés.
+      const [catPrompt, setCatPrompt] = useState(null);
       const handleBudgetCategory = (tx, cat) => {
+        setBudgetTx((prev) => prev.map((x) => (x.id === tx.id ? { ...x, cat, manual: true } : x)));
         const key = budgetKey(tx.desc);
-        if (key) setBudgetRules((r) => ({ ...r, [key]: cat }));
-        setBudgetTx((prev) => prev.map((x) => {
-          if (x.id === tx.id) return { ...x, cat, manual: true };
-          if (key && !x.manual && budgetKey(x.desc) === key) return { ...x, cat };
-          return x;
-        }));
+        if (!key) return;
+        const others = budgetTx.filter((x) => x.id !== tx.id && !x.manual && budgetKey(x.desc) === key && x.cat !== cat);
+        if (!others.length && budgetRules[key] === cat) return;
+        setCatPrompt({ tx, cat, key, others });
+      };
+      const applyCatPrompt = (withOthers) => {
+        const { cat, key, others } = catPrompt;
+        setBudgetRules((r) => ({ ...r, [key]: cat }));
+        if (withOthers && others.length) {
+          const ids = new Set(others.map((x) => x.id));
+          setBudgetTx((prev) => prev.map((x) => (ids.has(x.id) ? { ...x, cat } : x)));
+        }
+        setCatPrompt(null);
       };
       const handleBulkCategory = (ids, cat) => {
         const set = new Set(ids);
         setBudgetTx((prev) => prev.map((x) => (set.has(x.id) ? { ...x, cat, manual: true } : x)));
       };
-      const handleSetBudgetLimit = (cat, value) => setBudgetLimits((l) => {
+      const handleSetBudgetLimit = (cat, value, periode = "mois") => setBudgetLimits((l) => {
         const n = { ...l };
-        if (value === null || !(value > 0)) delete n[cat]; else n[cat] = Math.round(value);
+        if (value === null || !(value > 0)) delete n[cat];
+        else n[cat] = periode === "an" ? { montant: Math.round(value), periode: "an" } : Math.round(value);
         return n;
       });
-      const handleDeleteBudgetRule = (key) => setBudgetRules(({ [key]: _, ...rest }) => rest);
+      // Oublier une règle : les opérations qu'elle avait classées (hors choix manuels) reprennent leur catégorie automatique
+      const handleDeleteBudgetRule = (key) => {
+        const { [key]: _, ...rest } = budgetRules;
+        setBudgetRules(rest);
+        setBudgetTx((prev) => prev.map((x) => (!x.manual && budgetKey(x.desc) === key ? { ...x, cat: categorizeTx(x, rest) } : x)));
+      };
       const handleDeleteBudgetMonth = (p) => setBudgetTx((prev) => prev.filter((tx) => !tx.d.startsWith(p)));
       const budgetMonths = useMemo(() => buildBudgetMonths(budgetTx), [budgetTx]);
 
@@ -4612,6 +4716,11 @@ Méthode de calcul de l'application :
                 })}
               </nav>
             </>
+          )}
+
+          {catPrompt && (
+            <CategoryPrompt prompt={catPrompt} onOnlyThis={() => setCatPrompt(null)}
+              onRemember={() => applyCatPrompt(false)} onApplyAll={() => applyCatPrompt(true)} />
           )}
 
           <ClaudeChat open={chatOpen} onClose={() => setChatOpen(false)} seed={chatSeed} context={chatContext} uid={auth.currentUser?.uid} />
