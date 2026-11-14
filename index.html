@@ -3038,12 +3038,37 @@ Méthode de calcul de l'application :
       const t = useTheme();
       const isMobile = useIsMobile();
       const months = useMemo(() => buildBudgetMonths(transactions), [transactions]);
+      const [mode, setMode] = useState("mois");
       const [periode, setPeriode] = useState(null);
+      const [annee, setAnnee] = useState(null);
       const [filterCat, setFilterCat] = useState("all");
-      const current = months.find((m) => m.periode === periode) || months[months.length - 1];
-      const idx = current ? months.indexOf(current) : -1;
+      const [txLimit, setTxLimit] = useState(200);
+      const years = useMemo(() => [...new Set(months.map((m) => m.periode.slice(0, 4)))], [months]);
+      const monthCurrent = months.find((m) => m.periode === periode) || months[months.length - 1];
+      const year = years.includes(annee) ? annee : years[years.length - 1];
+      const yearMonths = useMemo(() => months.filter((m) => m.periode.startsWith(year || "")), [months, year]);
+      // Vue annuelle : on additionne les mois de l'année choisie
+      const yearAgg = useMemo(() => {
+        if (!yearMonths.length) return null;
+        const agg = { periode: year, salaire: 0, autresRevenus: 0, revenus: 0, depenses: 0, epargne: 0, byCat: {} };
+        yearMonths.forEach((m) => {
+          ["salaire", "autresRevenus", "revenus", "depenses", "epargne"].forEach((k) => { agg[k] += m[k]; });
+          Object.entries(m.byCat).forEach(([c, v]) => { agg.byCat[c] = (agg.byCat[c] || 0) + v; });
+        });
+        agg.solde = agg.revenus - agg.depenses;
+        agg.tauxEpargne = agg.revenus > 0 ? agg.solde / agg.revenus : null;
+        return agg;
+      }, [yearMonths, year]);
+      const annual = mode === "annee";
+      const current = annual ? yearAgg : monthCurrent;
+      const nMonths = annual ? yearMonths.length : 1;
+      const periodLabel = annual ? `Année ${year}` : current ? monthLong(current.periode) : "";
+      const navList = annual ? years : months.map((m) => m.periode);
+      const navValue = annual ? year : current?.periode;
+      const idx = navList.indexOf(navValue);
+      const goTo = (v) => { if (annual) setAnnee(v); else setPeriode(v); setTxLimit(200); };
       const last12 = months.slice(-12);
-      const prev12 = current ? months.filter((m) => m.periode < current.periode).slice(-12) : [];
+      const prev12 = !annual && current ? months.filter((m) => m.periode < current.periode).slice(-12) : [];
 
       const catRows = useMemo(() => {
         if (!current) return [];
@@ -3057,6 +3082,7 @@ Méthode de calcul de l'application :
           .sort((a, b) => b.value - a.value);
       }, [current, prev12]);
       const maxCat = Math.max(1, ...catRows.map((r) => Math.max(r.value, r.avg || 0)));
+      const incomeRows = current ? BUDGET_CATEGORIES.filter((c) => c.kind === "revenu" && current.byCat[c.id]).map((c) => ({ cat: c.id, value: current.byCat[c.id] })) : [];
 
       const monthTx = useMemo(() => {
         if (!current) return [];
@@ -3083,35 +3109,91 @@ Méthode de calcul de l'application :
         <div className="space-y-3 md:space-y-5">
           <BudgetImport onImport={onImport} />
 
+          <div className="flex justify-center">
+            <div className="flex p-0.5 rounded-lg text-sm" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
+              {[["mois", "Mensuel"], ["annee", "Annuel"]].map(([v, l]) => (
+                <button key={v} onClick={() => { setMode(v); setFilterCat("all"); setTxLimit(200); }} className="px-4 py-1.5 rounded-md"
+                  style={{ background: mode === v ? t.panel : "transparent", color: mode === v ? t.text : t.textMuted, fontWeight: mode === v ? 600 : 400 }}>{l}</button>
+              ))}
+            </div>
+          </div>
+
           <div className="flex items-center justify-between gap-2">
-            <button onClick={() => idx > 0 && setPeriode(months[idx - 1].periode)} disabled={idx <= 0} className="p-2 rounded-lg" style={{ color: idx > 0 ? t.text : t.border }}>
+            <button onClick={() => idx > 0 && goTo(navList[idx - 1])} disabled={idx <= 0} className="p-2 rounded-lg" style={{ color: idx > 0 ? t.text : t.border }}>
               <ChevronLeft size={18} />
             </button>
-            <select value={current.periode} onChange={(e) => setPeriode(e.target.value)} className="rounded-lg px-3 py-2 text-sm font-semibold capitalize" style={select}>
-              {months.map((m) => <option key={m.periode} value={m.periode}>{monthLong(m.periode)}</option>)}
+            <select value={navValue} onChange={(e) => goTo(e.target.value)} className="rounded-lg px-3 py-2 text-sm font-semibold capitalize" style={select}>
+              {navList.map((v) => <option key={v} value={v}>{annual ? `Année ${v}` : monthLong(v)}</option>)}
             </select>
-            <button onClick={() => idx < months.length - 1 && setPeriode(months[idx + 1].periode)} disabled={idx >= months.length - 1} className="p-2 rounded-lg" style={{ color: idx < months.length - 1 ? t.text : t.border }}>
+            <button onClick={() => idx < navList.length - 1 && goTo(navList[idx + 1])} disabled={idx >= navList.length - 1} className="p-2 rounded-lg" style={{ color: idx < navList.length - 1 ? t.text : t.border }}>
               <ChevronRight size={18} />
             </button>
           </div>
 
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
             <KPICard icon={Briefcase} label="Salaires" value={fmtEUR(current.salaire)}
-              sub={current.autresRevenus ? `+ ${fmtEUR(current.autresRevenus)} d'autres revenus` : `Moyenne 12 mois : ${fmtEUR(avg("salaire"))}`} />
+              sub={annual ? `${fmtEUR(current.salaire / nMonths)} / mois sur ${nMonths} mois${current.autresRevenus ? ` · + ${fmtEUR(current.autresRevenus)} d'autres revenus` : ""}`
+                : current.autresRevenus ? `+ ${fmtEUR(current.autresRevenus)} d'autres revenus` : `Moyenne 12 mois : ${fmtEUR(avg("salaire"))}`} />
             <KPICard icon={ArrowDownRight} label="Dépenses" value={fmtEUR(current.depenses)}
-              sub={`Moyenne 12 mois : ${fmtEUR(avg("depenses"))}`} />
+              sub={annual ? `${fmtEUR(current.depenses / nMonths)} / mois sur ${nMonths} mois` : `Moyenne 12 mois : ${fmtEUR(avg("depenses"))}`} />
             <KPICard icon={Wallet} label="Reste (revenus − dépenses)" value={signed(current.solde)}
-              sub={current.tauxEpargne !== null ? `${Math.round(current.tauxEpargne * 100)} % des revenus mis de côté` : "Pas de revenu ce mois-ci"} tone={current.solde >= 0 ? "up" : "down"} />
+              sub={current.tauxEpargne !== null ? `${Math.round(current.tauxEpargne * 100)} % des revenus mis de côté` : (annual ? "Pas de revenu cette année" : "Pas de revenu ce mois-ci")} tone={current.solde >= 0 ? "up" : "down"} />
             <KPICard icon={PiggyBank} label="Versé vers les placements" value={fmtEUR(current.epargne)}
               sub={isMobile ? "Net des retraits" : "Courtiers, assurance vie, crypto… nets des retraits"} />
           </div>
 
           <Panel title="Revenus et dépenses par mois" subtitle="Comptes Revolut et LCL, hors virements entre vos comptes et versements vers les placements">
-            <BudgetMonthlyChart data={last12} />
+            <BudgetMonthlyChart data={annual ? yearMonths : last12} />
           </Panel>
 
-          <Panel title={`Dépenses par catégorie — ${monthLong(current.periode)}`}
-            subtitle={prev12.length ? `Barre pleine : ce mois-ci · trait : moyenne des ${prev12.length} mois précédents` : "Remboursements déduits de la catégorie concernée"}>
+          {annual && (
+            <Panel title={`Salaires et dépenses mois par mois — ${year}`} subtitle="Cliquez un mois pour l'ouvrir en vue mensuelle">
+              <div className="overflow-x-auto -mx-1">
+                <table className="w-full text-xs" style={{ ...NUM, borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ color: t.textMuted }}>
+                      {["Mois", "Salaires", "Autres revenus", "Dépenses", "Reste", "Placements"].map((h, i) => (
+                        <th key={h} className={`py-1.5 px-2 font-medium whitespace-nowrap ${i ? "text-right" : "text-left"}`}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {yearMonths.map((m) => (
+                      <tr key={m.periode} onClick={() => { setMode("mois"); setPeriode(m.periode); }} className="cursor-pointer" style={{ borderTop: `1px solid ${t.border}` }}>
+                        <td className="py-1.5 px-2 capitalize whitespace-nowrap" style={{ color: t.text }}>{periodeDate(m.periode).toLocaleDateString("fr-FR", { month: "long" })}</td>
+                        <td className="py-1.5 px-2 text-right" style={{ color: t.text }}>{fmtEUR(m.salaire)}</td>
+                        <td className="py-1.5 px-2 text-right" style={{ color: t.textMuted }}>{fmtEUR(m.autresRevenus)}</td>
+                        <td className="py-1.5 px-2 text-right" style={{ color: t.text }}>{fmtEUR(m.depenses)}</td>
+                        <td className="py-1.5 px-2 text-right font-medium" style={{ color: m.solde >= 0 ? t.gain : t.loss }}>{signed(m.solde)}</td>
+                        <td className="py-1.5 px-2 text-right" style={{ color: t.textMuted }}>{fmtEUR(m.epargne)}</td>
+                      </tr>
+                    ))}
+                    <tr style={{ borderTop: `2px solid ${t.border}` }}>
+                      <td className="py-2 px-2 font-semibold" style={{ color: t.text }}>Total</td>
+                      <td className="py-2 px-2 text-right font-semibold" style={{ color: t.text }}>{fmtEUR(current.salaire)}</td>
+                      <td className="py-2 px-2 text-right font-semibold" style={{ color: t.text }}>{fmtEUR(current.autresRevenus)}</td>
+                      <td className="py-2 px-2 text-right font-semibold" style={{ color: t.text }}>{fmtEUR(current.depenses)}</td>
+                      <td className="py-2 px-2 text-right font-semibold" style={{ color: current.solde >= 0 ? t.gain : t.loss }}>{signed(current.solde)}</td>
+                      <td className="py-2 px-2 text-right font-semibold" style={{ color: t.text }}>{fmtEUR(current.epargne)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              {incomeRows.length > 0 && (
+                <div className="mt-4 flex flex-wrap gap-x-6 gap-y-1 text-xs" style={{ color: t.textMuted }}>
+                  {incomeRows.map((r) => (
+                    <button key={r.cat} onClick={() => setFilterCat(filterCat === r.cat ? "all" : r.cat)} style={{ fontWeight: filterCat === r.cat ? 700 : 400 }}>
+                      {r.cat} : <span style={{ color: t.text, ...NUM }}>{fmtEUR(r.value)}</span> → voir les opérations
+                    </button>
+                  ))}
+                </div>
+              )}
+            </Panel>
+          )}
+
+          <Panel title={`Dépenses par catégorie — ${periodLabel}`}
+            subtitle={annual ? `Total de l'année · part des dépenses · moyenne par mois (${nMonths} mois) · cliquez pour voir les opérations`
+              : prev12.length ? `Barre pleine : ce mois-ci · trait : moyenne des ${prev12.length} mois précédents` : "Remboursements déduits de la catégorie concernée"}>
             <div className="space-y-2.5">
               {catRows.map((r) => {
                 const over = r.avg !== null && r.avg > 0 && r.value > r.avg * 1.25 && r.value - r.avg > 30;
@@ -3121,6 +3203,7 @@ Méthode de calcul de l'application :
                       <span style={{ color: t.text, fontWeight: filterCat === r.cat ? 700 : 500 }}>{r.cat}</span>
                       <span style={{ color: t.text, ...NUM }}>
                         {fmtEUR(r.value)}
+                        {annual && current.depenses > 0 && <span style={{ color: t.textMuted }}> · {Math.round((r.value / current.depenses) * 100)} % · {fmtEUR(r.value / nMonths)} / mois</span>}
                         {r.avg !== null && <span style={{ color: over ? t.warning : t.textMuted }}> · moy. {fmtEUR(r.avg)}{over ? " ▲" : ""}</span>}
                       </span>
                     </div>
@@ -3136,7 +3219,7 @@ Méthode de calcul de l'application :
             </div>
           </Panel>
 
-          <Panel title={`Opérations — ${monthLong(current.periode)} (${monthTx.length})`}
+          <Panel title={`Opérations — ${periodLabel}${filterCat !== "all" ? ` · ${filterCat}` : ""} (${monthTx.length})`}
             subtitle="Changer une catégorie l'applique aux autres opérations du même marchand et aux prochains relevés"
             action={
               <select value={filterCat} onChange={(e) => setFilterCat(e.target.value)} className="rounded-lg px-2 py-1.5 text-xs shrink-0" style={select}>
@@ -3145,7 +3228,7 @@ Méthode de calcul de l'application :
               </select>
             }>
             <div className="divide-y" style={{ borderColor: t.border }}>
-              {monthTx.map((tx) => {
+              {monthTx.slice(0, txLimit).map((tx) => {
                 const kind = budgetKind(tx.cat);
                 const muted = kind === "neutre";
                 return (
@@ -3166,10 +3249,17 @@ Méthode de calcul de l'application :
                 );
               })}
             </div>
-            <div className="mt-4 flex items-center justify-end gap-2 text-xs" style={{ color: t.textMuted }}>
-              Supprimer les opérations de ce mois
-              <DeleteButton title={`Supprimer les opérations de ${monthLong(current.periode)}`} onConfirm={() => { onDeleteMonth(current.periode); setPeriode(null); }} />
-            </div>
+            {monthTx.length > txLimit && (
+              <button onClick={() => setTxLimit((l) => l + 300)} className="w-full mt-2 py-2 rounded-lg text-sm" style={{ background: t.panelAlt, color: t.text, border: `1px solid ${t.border}` }}>
+                Afficher plus ({monthTx.length - txLimit} restantes)
+              </button>
+            )}
+            {!annual && (
+              <div className="mt-4 flex items-center justify-end gap-2 text-xs" style={{ color: t.textMuted }}>
+                Supprimer les opérations de ce mois
+                <DeleteButton title={`Supprimer les opérations de ${monthLong(current.periode)}`} onConfirm={() => { onDeleteMonth(current.periode); setPeriode(null); }} />
+              </div>
+            )}
           </Panel>
 
           {ruleEntries.length > 0 && (
