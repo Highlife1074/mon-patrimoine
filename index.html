@@ -558,6 +558,54 @@
         });
     }
 
+    // ================== BUDGETS PAR CATÉGORIE ==================
+    const moisCourant = () => new Date().toISOString().slice(0, 7);
+    const depenseCat = (m, cat) => Math.max(0, -((m && m.byCat[cat]) || 0));
+
+    // Analyse d'un mois : budgets dépassés / presque atteints, hausses par rapport aux 6 mois précédents
+    function analyzeBudgetMonth(months, periode, limits) {
+      const idx = months.findIndex((m) => m.periode === periode);
+      if (idx < 0) return null;
+      const m = months[idx];
+      const prev = months.slice(Math.max(0, idx - 6), idx);
+      const avgOf = (cat) => (prev.length ? prev.reduce((s, x) => s + depenseCat(x, cat), 0) / prev.length : null);
+      const rows = Object.entries(limits || {})
+        .filter(([cat, limit]) => limit > 0 && budgetKind(cat) === "depense")
+        .map(([cat, limit]) => { const spent = depenseCat(m, cat); return { cat, limit, spent, ratio: spent / limit }; })
+        .sort((a, b) => b.ratio - a.ratio);
+      const over = rows.filter((r) => r.spent > r.limit).sort((a, b) => (b.spent - b.limit) - (a.spent - a.limit));
+      const near = rows.filter((r) => r.spent <= r.limit && r.ratio >= 0.9);
+      const totalBudget = rows.reduce((s, r) => s + r.limit, 0);
+      const totalBudgeted = rows.reduce((s, r) => s + r.spent, 0);
+      const hausses = BUDGET_CATEGORIES.filter((c) => c.kind === "depense")
+        .map((c) => { const spent = depenseCat(m, c.id), avg = avgOf(c.id); return { cat: c.id, spent, avg, diff: avg === null ? 0 : spent - avg }; })
+        .filter((r) => r.avg !== null && r.diff > Math.max(50, r.avg * 0.3) && !over.some((o) => o.cat === r.cat))
+        .sort((a, b) => b.diff - a.diff)
+        .slice(0, 3);
+      const avgDepenses = prev.length ? prev.reduce((s, x) => s + x.depenses, 0) / prev.length : null;
+      const avgSolde = prev.length ? prev.reduce((s, x) => s + x.solde, 0) / prev.length : null;
+      return { periode, month: m, rows, over, near, totalBudget, totalBudgeted, hausses, avgDepenses, avgSolde, nPrev: prev.length, enCours: periode === moisCourant() };
+    }
+
+    // Résumé en une ligne (message d'import, tableau de bord)
+    function budgetAlertText(a) {
+      if (!a) return "";
+      const mois = monthLong(a.periode);
+      if (!a.rows.length) return "";
+      if (a.over.length) {
+        const det = a.over.slice(0, 3).map((r) => `${r.cat} +${fmtEUR(r.spent - r.limit)}`).join(", ") + (a.over.length > 3 ? `, et ${a.over.length - 3} autre${a.over.length > 4 ? "s" : ""}` : "");
+        return `⚠ ${mois} : ${a.over.length} budget${a.over.length > 1 ? "s" : ""} dépassé${a.over.length > 1 ? "s" : ""} (${det})`;
+      }
+      return `✓ ${mois} : tous les budgets respectés${a.near.length ? ` (${a.near.map((r) => r.cat).join(", ")} à plus de 90 %)` : ""}`;
+    }
+
+    // Dernier mois terminé présent dans les opérations (le mois en cours n'est pas encore « fini »)
+    function lastCompleteMonth(months) {
+      const cur = moisCourant();
+      const done = months.filter((m) => m.periode < cur);
+      return (done.length ? done[done.length - 1] : months[months.length - 1])?.periode || null;
+    }
+
     // ================== RELEVÉS LCL (PDF) ==================
     const PDFJS_VERSION = "3.11.174";
     let pdfjsPromise = null;
@@ -3077,16 +3125,20 @@ Méthode de calcul de l'application :
     // ================== ONGLET BUDGET ==================
     const monthLong = (p) => periodeDate(p).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
 
-    function BudgetImport({ onImport }) {
+    function BudgetImport({ onImport, onDone }) {
       const t = useTheme();
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState("");
       const [info, setInfo] = useState("");
+      const [alerte, setAlerte] = useState("");
       const handleFiles = async (files) => {
-        setLoading(true); setError(""); setInfo("");
+        setLoading(true); setError(""); setInfo(""); setAlerte("");
         try {
-          const { info, warnings } = await onImport(files);
+          const res = await onImport(files);
+          const { info, warnings } = res;
           setInfo(info);
+          setAlerte(res.alerte || "");
+          onDone?.(res);
           if (warnings.length) setError(warnings.join(" · "));
         } catch (e) {
           setError(e.message || "lecture impossible");
@@ -3109,6 +3161,9 @@ Méthode de calcul de l'application :
           </p>
           {loading && <p className="text-xs mt-1" style={{ color: t.textMuted }}>Lecture…</p>}
           {info && <p className="text-xs mt-1" style={{ color: t.gain }}>{info}</p>}
+          {alerte && (
+            <p className="text-sm mt-2 px-3 py-2 rounded-lg font-medium" style={{ color: alerte.startsWith("⚠") ? t.loss : t.gain, background: `${alerte.startsWith("⚠") ? t.loss : t.gain}17` }}>{alerte}</p>
+          )}
           {error && <p className="text-xs mt-1" style={{ color: t.loss }}>{error}</p>}
         </div>
       );
@@ -3159,11 +3214,86 @@ Méthode de calcul de l'application :
       );
     }
 
-    function BudgetTab({ transactions, rules, onImport, onSetCategory, onDeleteRule, onDeleteMonth }) {
+    function BudgetAnalysis({ analysis: a, onEditLimits }) {
+      const t = useTheme();
+      if (!a) return null;
+      const m = a.month;
+      const alert = a.over.length > 0;
+      const tone = alert ? t.loss : a.rows.length ? t.gain : t.border;
+      const line = (children, color) => <li className="text-xs leading-relaxed" style={{ color: color || t.textMuted }}>{children}</li>;
+      return (
+        <div className="rounded-2xl p-4 md:p-5" style={{ background: alert ? `${t.loss}12` : t.panel, border: `1px solid ${alert ? `${t.loss}88` : t.border}`, boxShadow: t.shadow }}>
+          <div className="flex items-start justify-between gap-3 mb-2">
+            <h3 className="text-sm font-semibold flex items-center gap-2" style={{ color: t.text }}>
+              <span style={{ color: tone }}>{alert ? "⚠" : a.rows.length ? "✓" : "•"}</span>
+              Analyse de {monthLong(a.periode)}{a.enCours ? " (mois en cours)" : ""}
+            </h3>
+            <button onClick={onEditLimits} className="text-xs px-2.5 py-1 rounded-lg shrink-0" style={{ border: `1px solid ${t.border}`, color: t.text, background: t.panelAlt }}>
+              {a.rows.length ? "Modifier les budgets" : "Définir des budgets"}
+            </button>
+          </div>
+          <ul className="space-y-1">
+            {a.over.map((r) => line(
+              <>
+                <span className="font-semibold" style={{ color: t.loss }}>{r.cat} : budget dépassé de {fmtEUR(r.spent - r.limit)}</span>
+                {" "}— {fmtEUR(r.spent)} dépensés pour {fmtEUR(r.limit)} prévus ({Math.round(r.ratio * 100)} %)
+              </>, t.text))}
+            {a.near.map((r) => line(
+              <><span className="font-semibold" style={{ color: t.warning }}>{r.cat} : {Math.round(r.ratio * 100)} % du budget</span> — {fmtEUR(r.spent)} sur {fmtEUR(r.limit)}</>, t.text))}
+            {a.rows.length > 0 && !a.over.length && !a.near.length && line(<>Tous les budgets sont respectés.</>, t.text)}
+            {a.rows.length > 0 && line(<>Catégories budgétées : {fmtEUR(a.totalBudgeted)} dépensés pour {fmtEUR(a.totalBudget)} prévus.</>)}
+            {!a.rows.length && line(<>Aucun budget défini : fixez un montant par catégorie pour être alerté quand il est dépassé.</>)}
+            {a.hausses.map((r) => line(<>{r.cat} : {fmtEUR(r.spent)}, soit {fmtEUR(r.diff)} de plus que votre moyenne ({fmtEUR(r.avg)}/mois).</>))}
+            {a.avgDepenses !== null && line(
+              <>Dépenses du mois : {fmtEUR(m.depenses)} ({m.depenses > a.avgDepenses ? "+" : "−"}{fmtEUR(Math.abs(m.depenses - a.avgDepenses))} par rapport à la moyenne des {a.nPrev} mois précédents) ·
+                écart revenus − dépenses : <span style={{ color: m.solde >= 0 ? t.gain : t.loss }}>{signed(m.solde)}</span>.</>)}
+          </ul>
+        </div>
+      );
+    }
+
+    function BudgetLimitsEditor({ limits, onSetLimit, months, onClose }) {
+      const t = useTheme();
+      const last6 = months.filter((m) => m.periode < moisCourant()).slice(-6);
+      const avgOf = (cat) => (last6.length ? last6.reduce((s, m) => s + depenseCat(m, cat), 0) / last6.length : 0);
+      const cats = BUDGET_CATEGORIES.filter((c) => c.kind === "depense");
+      const total = cats.reduce((s, c) => s + (limits[c.id] || 0), 0);
+      const arrondi = (v) => (v < 100 ? Math.ceil(v / 10) * 10 : Math.ceil(v / 50) * 50);
+      const input = { background: t.panel, color: t.text, border: `1px solid ${t.border}` };
+      return (
+        <Panel title="Budgets mensuels par catégorie" subtitle={`Montant maximum par mois · total prévu : ${fmtEUR(total)} · moyenne calculée sur les ${last6.length} derniers mois terminés`}
+          action={<button onClick={onClose} className="p-1 rounded-lg" style={{ color: t.textMuted }} title="Fermer"><X size={16} /></button>}>
+          <div className="flex flex-wrap gap-2 mb-3">
+            <button onClick={() => cats.forEach((c) => { const a = avgOf(c.id); if (!limits[c.id] && a >= 1) onSetLimit(c.id, arrondi(a)); })}
+              className="text-xs px-3 py-1.5 rounded-lg" style={{ background: t.accent, color: t.onAccent }}>
+              Remplir les cases vides avec mes moyennes
+            </button>
+          </div>
+          <div className="space-y-1.5">
+            {cats.map((c) => {
+              const a = avgOf(c.id);
+              return (
+                <div key={c.id} className="flex items-center gap-2 text-sm">
+                  <span className="flex-1 min-w-0 truncate" style={{ color: t.text }}>{c.id}</span>
+                  <span className="text-xs shrink-0 hidden sm:inline" style={{ color: t.textMuted, ...NUM }}>moy. {fmtEUR(a)}</span>
+                  <input type="number" inputMode="decimal" min="0" step="10" placeholder={a >= 1 ? String(arrondi(a)) : "—"}
+                    value={limits[c.id] ?? ""} onChange={(e) => onSetLimit(c.id, e.target.value === "" ? null : Math.max(0, Number(e.target.value)))}
+                    className="w-24 rounded-lg px-2 py-1 text-right text-sm" style={{ ...input, ...NUM }} />
+                  <span className="text-xs w-4" style={{ color: t.textMuted }}>€</span>
+                </div>
+              );
+            })}
+          </div>
+        </Panel>
+      );
+    }
+
+    function BudgetTab({ transactions, rules, limits = {}, onSetLimit, onImport, onSetCategory, onDeleteRule, onDeleteMonth }) {
       const t = useTheme();
       const isMobile = useIsMobile();
       const months = useMemo(() => buildBudgetMonths(transactions), [transactions]);
       const [mode, setMode] = useState("mois");
+      const [showLimits, setShowLimits] = useState(false);
       const [periode, setPeriode] = useState(null);
       const [annee, setAnnee] = useState(null);
       const [filterCat, setFilterCat] = useState("all");
@@ -3201,13 +3331,17 @@ Méthode de calcul de l'application :
           .map((c) => {
             const value = -(current.byCat[c.id] || 0);
             const avg = prev12.length ? prev12.reduce((s, m) => s - (m.byCat[c.id] || 0), 0) / prev12.length : null;
-            return { cat: c.id, value, avg };
+            // Budget : mensuel, ou multiplié par le nombre de mois en vue annuelle
+            const limit = limits[c.id] > 0 ? limits[c.id] * nMonths : null;
+            return { cat: c.id, value, avg, limit };
           })
-          .filter((r) => Math.abs(r.value) >= 0.5 || (r.avg && r.avg >= 1))
+          .filter((r) => Math.abs(r.value) >= 0.5 || (r.avg && r.avg >= 1) || r.limit)
           .sort((a, b) => b.value - a.value);
-      }, [current, prev12]);
-      const maxCat = Math.max(1, ...catRows.map((r) => Math.max(r.value, r.avg || 0)));
+      }, [current, prev12, limits, nMonths]);
+      const maxCat = Math.max(1, ...catRows.map((r) => Math.max(r.value, r.avg || 0, r.limit || 0)));
       const incomeRows = current ? BUDGET_CATEGORIES.filter((c) => c.kind === "revenu" && current.byCat[c.id]).map((c) => ({ cat: c.id, value: current.byCat[c.id] })) : [];
+
+      const analysis = useMemo(() => (!annual && current ? analyzeBudgetMonth(months, current.periode, limits) : null), [annual, current, months, limits]);
 
       const monthTx = useMemo(() => {
         if (!current) return [];
@@ -3232,16 +3366,22 @@ Méthode de calcul de l'application :
 
       return (
         <div className="space-y-3 md:space-y-5">
-          <BudgetImport onImport={onImport} />
+          <BudgetImport onImport={onImport} onDone={(r) => { if (r.focus) { setMode("mois"); setPeriode(r.focus); setFilterCat("all"); } }} />
 
-          <div className="flex justify-center">
+          <div className="flex justify-center gap-2">
             <div className="flex p-0.5 rounded-lg text-sm" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
               {[["mois", "Mensuel"], ["annee", "Annuel"]].map(([v, l]) => (
                 <button key={v} onClick={() => { setMode(v); setFilterCat("all"); setTxLimit(200); }} className="px-4 py-1.5 rounded-md"
                   style={{ background: mode === v ? t.panel : "transparent", color: mode === v ? t.text : t.textMuted, fontWeight: mode === v ? 600 : 400 }}>{l}</button>
               ))}
             </div>
+            <button onClick={() => setShowLimits((v) => !v)} className="px-3 py-1.5 rounded-lg text-sm"
+              style={{ background: showLimits ? t.panel : t.panelAlt, border: `1px solid ${t.border}`, color: t.text, fontWeight: showLimits ? 600 : 400 }}>
+              Budgets
+            </button>
           </div>
+
+          {showLimits && <BudgetLimitsEditor limits={limits} onSetLimit={onSetLimit} months={months} onClose={() => setShowLimits(false)} />}
 
           <div className="flex items-center justify-between gap-2">
             <button onClick={() => idx > 0 && goTo(navList[idx - 1])} disabled={idx <= 0} className="p-2 rounded-lg" style={{ color: idx > 0 ? t.text : t.border }}>
@@ -3254,6 +3394,8 @@ Méthode de calcul de l'application :
               <ChevronRight size={18} />
             </button>
           </div>
+
+          {!annual && <BudgetAnalysis analysis={analysis} onEditLimits={() => setShowLimits(true)} />}
 
           <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 md:gap-4">
             <KPICard icon={Briefcase} label="Salaires" value={fmtEUR(current.salaire)}
@@ -3321,10 +3463,11 @@ Méthode de calcul de l'application :
 
           <Panel title={`Dépenses par catégorie — ${periodLabel}`}
             subtitle={annual ? `Total de l'année · part des dépenses · moyenne par mois (${nMonths} mois) · cliquez pour voir les opérations`
-              : prev12.length ? `Barre pleine : ce mois-ci · trait : moyenne des ${prev12.length} mois précédents` : "Remboursements déduits de la catégorie concernée"}>
+              : prev12.length ? `Barre pleine : ce mois-ci · trait blanc : moyenne des ${prev12.length} mois précédents · trait jaune : budget` : "Remboursements déduits de la catégorie concernée"}>
             <div className="space-y-2.5">
               {catRows.map((r) => {
                 const over = r.avg !== null && r.avg > 0 && r.value > r.avg * 1.25 && r.value - r.avg > 30;
+                const depasse = r.limit !== null && r.value > r.limit;
                 return (
                   <button key={r.cat} type="button" onClick={() => setFilterCat(filterCat === r.cat ? "all" : r.cat)} className="w-full text-left">
                     <div className="flex items-center justify-between text-xs mb-1 gap-2">
@@ -3332,11 +3475,15 @@ Méthode de calcul de l'application :
                       <span style={{ color: t.text, ...NUM }}>
                         {fmtEUR(r.value)}
                         {annual && current.depenses > 0 && <span style={{ color: t.textMuted }}> · {Math.round((r.value / current.depenses) * 100)} % · {fmtEUR(r.value / nMonths)} / mois</span>}
+                        {r.limit !== null && <span style={{ color: depasse ? t.loss : t.textMuted, fontWeight: depasse ? 600 : 400 }}> · budget {fmtEUR(r.limit)}{depasse ? ` (+${fmtEUR(r.value - r.limit)})` : ""}</span>}
                         {r.avg !== null && <span style={{ color: over ? t.warning : t.textMuted }}> · moy. {fmtEUR(r.avg)}{over ? " ▲" : ""}</span>}
                       </span>
                     </div>
                     <div className="relative h-2 rounded-full" style={{ background: t.panelAlt }}>
-                      <div className="h-2 rounded-full" style={{ width: `${Math.max(0, (r.value / maxCat) * 100)}%`, background: t.s2 }} />
+                      <div className="h-2 rounded-full" style={{ width: `${Math.max(0, (r.value / maxCat) * 100)}%`, background: depasse ? t.loss : t.s2 }} />
+                      {r.limit !== null && (
+                        <div className="absolute -top-1 w-1 h-4 rounded" title={`Budget ${fmtEUR(r.limit)}`} style={{ left: `calc(${(r.limit / maxCat) * 100}% - 2px)`, background: t.warning }} />
+                      )}
                       {r.avg !== null && r.avg > 0 && (
                         <div className="absolute -top-0.5 w-0.5 h-3 rounded" style={{ left: `${(r.avg / maxCat) * 100}%`, background: t.text }} />
                       )}
@@ -3687,6 +3834,7 @@ Méthode de calcul de l'application :
       // Budget : opérations Revolut importées (un document Firestore par année) et catégories apprises par marchand
       const [budgetTx, setBudgetTx] = useState([]);
       const [budgetRules, setBudgetRules] = useState({});
+      const [budgetLimits, setBudgetLimits] = useState({});
       const [monthlyModalOpen, setMonthlyModalOpen] = useState(false);
       const [monthlyModalKey, setMonthlyModalKey] = useState(0);
       const [tab, setTab] = useState("dashboard");
@@ -3729,6 +3877,7 @@ Méthode de calcul de l'application :
               if (saved.budget) {
                 setBudgetTx(saved.budget.tx || []);
                 setBudgetRules(saved.budget.rules || {});
+                setBudgetLimits(saved.budget.limits || {});
               }
             }
           } catch (e) {
@@ -3751,7 +3900,7 @@ Méthode de calcul de l'application :
               transfers,
               recurringTransfers,
               // Budget (opérations bancaires + catégories apprises) : dans le même document, seul autorisé en écriture
-              budget: { tx: budgetTx, rules: budgetRules },
+              budget: { tx: budgetTx, rules: budgetRules, limits: budgetLimits },
               seedVersion: SEED_VERSION,
               derniereMiseAJour: new Date().toISOString()
             };
@@ -3769,7 +3918,7 @@ Méthode de calcul de l'application :
           }
         }, 800); 
         return () => clearTimeout(delai);
-      }, [positions, monthly, weeklyArchive, transfers, recurringTransfers, budgetTx, budgetRules, loaded]);
+      }, [positions, monthly, weeklyArchive, transfers, recurringTransfers, budgetTx, budgetRules, budgetLimits, loaded]);
 
       const handleBudgetImport = async (files) => {
         const transactions = [];
@@ -3829,7 +3978,13 @@ Méthode de calcul de l'application :
         if (controles) parts.push(`soldes vérifiés sur ${controles} relevé${controles > 1 ? "s" : ""} PDF ✓`);
         if (skippedCurrency) parts.push(`${skippedCurrency} hors euros ignorée${skippedCurrency > 1 ? "s" : ""}`);
         if (skippedState) parts.push(`${skippedState} annulée${skippedState > 1 ? "s" : ""} ignorée${skippedState > 1 ? "s" : ""}`);
-        return { info: parts.join(" · "), warnings };
+        // Analyse du dernier mois terminé couvert par ces relevés
+        const apres = [...budgetTx.map((tx) => (recat.has(tx.id) ? { ...tx, cat: recat.get(tx.id) } : tx)), ...fresh];
+        const moisApres = buildBudgetMonths(apres);
+        const importes = buildBudgetMonths(transactions);
+        const focus = lastCompleteMonth(importes);
+        const alerte = focus ? budgetAlertText(analyzeBudgetMonth(moisApres, focus, budgetLimits)) : "";
+        return { info: parts.join(" · "), warnings, focus, alerte };
       };
       const handleBudgetCategory = (tx, cat) => {
         const key = budgetKey(tx.desc);
@@ -3844,6 +3999,11 @@ Méthode de calcul de l'application :
         const set = new Set(ids);
         setBudgetTx((prev) => prev.map((x) => (set.has(x.id) ? { ...x, cat, manual: true } : x)));
       };
+      const handleSetBudgetLimit = (cat, value) => setBudgetLimits((l) => {
+        const n = { ...l };
+        if (value === null || !(value > 0)) delete n[cat]; else n[cat] = Math.round(value);
+        return n;
+      });
       const handleDeleteBudgetRule = (key) => setBudgetRules(({ [key]: _, ...rest }) => rest);
       const handleDeleteBudgetMonth = (p) => setBudgetTx((prev) => prev.filter((tx) => !tx.d.startsWith(p)));
       const budgetMonths = useMemo(() => buildBudgetMonths(budgetTx), [budgetTx]);
@@ -3857,7 +4017,7 @@ Méthode de calcul de l'application :
       };
 
       const handleExport = () => {
-        const payload = { positions, monthly, weekly: weeklyArchive, transfers, recurringTransfers, budget: { transactions: budgetTx, rules: budgetRules }, seedVersion: SEED_VERSION, exportedAt: new Date().toISOString() };
+        const payload = { positions, monthly, weekly: weeklyArchive, transfers, recurringTransfers, budget: { transactions: budgetTx, rules: budgetRules, limits: budgetLimits }, seedVersion: SEED_VERSION, exportedAt: new Date().toISOString() };
         const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -3880,6 +4040,7 @@ Méthode de calcul de l'application :
           if (data.recurringTransfers) setRecurringTransfers(data.recurringTransfers);
           if (data.budget?.transactions) setBudgetTx(data.budget.transactions);
           if (data.budget?.rules) setBudgetRules(data.budget.rules);
+          if (data.budget?.limits) setBudgetLimits(data.budget.limits);
         } catch (e) {
           alert("Fichier de sauvegarde illisible");
         }
@@ -4204,16 +4365,22 @@ Méthode de calcul de l'application :
                   </div>
 
                   {budgetMonths.length > 0 && (() => {
-                    const b = budgetMonths[budgetMonths.length - 1];
+                    const b = budgetMonths.find((m) => m.periode === lastCompleteMonth(budgetMonths)) || budgetMonths[budgetMonths.length - 1];
+                    const an = analyzeBudgetMonth(budgetMonths, b.periode, budgetLimits);
                     return (
                       <button type="button" onClick={() => goTab("budget")} className="w-full text-left rounded-2xl p-4 md:p-5 flex flex-wrap items-center gap-x-6 gap-y-2"
                         style={{ background: t.panel, border: `1px solid ${t.border}`, boxShadow: t.shadow }}>
                         <span className="text-sm font-semibold flex items-center gap-2" style={{ color: t.text }}>
                           <Receipt size={16} color={t.accent} /> Budget de {monthLong(b.periode)}
                         </span>
-                        {[["Salaires", fmtEUR(b.salaire)], ["Dépenses", fmtEUR(b.depenses)], ["Reste", signed(b.solde)]].map(([l, v]) => (
+                        {[["Salaires", fmtEUR(b.salaire)], ["Dépenses", fmtEUR(b.depenses)], ["Écart", signed(b.solde)]].map(([l, v]) => (
                           <span key={l} className="text-xs" style={{ color: t.textMuted }}>{l} <span className="text-sm font-semibold ml-1" style={{ color: t.text, ...NUM }}>{v}</span></span>
                         ))}
+                        {an?.over.length > 0 && (
+                          <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ color: t.loss, background: `${t.loss}1f` }}>
+                            ⚠ {an.over.length} budget{an.over.length > 1 ? "s" : ""} dépassé{an.over.length > 1 ? "s" : ""}
+                          </span>
+                        )}
                         <ChevronRight size={16} color={t.textMuted} className="ml-auto" />
                       </button>
                     );
@@ -4296,6 +4463,8 @@ Méthode de calcul de l'application :
                 <BudgetTab
                   transactions={budgetTx}
                   rules={budgetRules}
+                  limits={budgetLimits}
+                  onSetLimit={handleSetBudgetLimit}
                   onImport={handleBudgetImport}
                   onSetCategory={handleBudgetCategory}
                   onDeleteRule={handleDeleteBudgetRule}
