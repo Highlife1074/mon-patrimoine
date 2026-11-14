@@ -3230,6 +3230,35 @@ Méthode de calcul de l'application :
       );
     }
 
+    // Commentaire libre sur une opération : bouton 💬 et zone d'édition sous la ligne
+    function NoteButton({ tx, editing, onToggle }) {
+      const t = useTheme();
+      return (
+        <button type="button" onClick={onToggle} title={tx.note ? "Modifier le commentaire" : "Ajouter un commentaire"}
+          className="shrink-0 p-1.5 rounded-lg" style={{ color: tx.note || editing ? t.accent : t.textMuted, background: editing ? t.panelAlt : "transparent" }}>
+          <MessageCircle size={15} />
+        </button>
+      );
+    }
+    function NoteBlock({ tx, editing, onSave, onCancel }) {
+      const t = useTheme();
+      const [draft, setDraft] = useState(tx.note || "");
+      useEffect(() => { if (editing) setDraft(tx.note || ""); }, [editing]);
+      if (editing) {
+        return (
+          <div className="flex items-center gap-2 pb-2 md:pl-14">
+            <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} maxLength={300} placeholder="Commentaire (ex. : billets Athènes–Paris pour les vacances)"
+              onKeyDown={(e) => { if (e.key === "Enter") onSave(draft); if (e.key === "Escape") onCancel(); }}
+              className="flex-1 min-w-0 rounded-lg px-3 py-1.5 text-sm" style={{ background: t.panel, color: t.text, border: `1px solid ${t.accent}` }} />
+            <button onClick={() => onSave(draft)} className="px-3 py-1.5 rounded-lg text-xs font-medium shrink-0" style={{ background: t.accent, color: t.onAccent }}>OK</button>
+            {tx.note && <button onClick={() => onSave("")} className="px-2 py-1.5 rounded-lg text-xs shrink-0" style={{ color: t.loss, border: `1px solid ${t.border}` }}>Effacer</button>}
+          </div>
+        );
+      }
+      if (!tx.note) return null;
+      return <p className="text-xs italic pb-2 md:pl-14 break-words" style={{ color: t.textMuted }}>💬 {tx.note}</p>;
+    }
+
     function CategoryPrompt({ prompt, onOnlyThis, onRemember, onApplyAll }) {
       const t = useTheme();
       const { tx, cat, others } = prompt;
@@ -3370,7 +3399,7 @@ Méthode de calcul de l'application :
       );
     }
 
-    function BudgetTab({ transactions, rules, limits = {}, onSetLimit, onImport, onSetCategory, onDeleteRule, onDeleteMonth }) {
+    function BudgetTab({ transactions, rules, limits = {}, onSetLimit, onImport, onSetCategory, onSetNote, onDeleteRule, onDeleteMonth }) {
       const t = useTheme();
       const isMobile = useIsMobile();
       const months = useMemo(() => buildBudgetMonths(transactions), [transactions]);
@@ -3380,6 +3409,7 @@ Méthode de calcul de l'application :
       const [annee, setAnnee] = useState(null);
       const [filterCat, setFilterCat] = useState("all");
       const [txLimit, setTxLimit] = useState(200);
+      const [noteEdit, setNoteEdit] = useState(null);
       const [txSens, setTxSens] = useState("all");
       const [txMin, setTxMin] = useState("");
       const [txMax, setTxMax] = useState("");
@@ -3633,7 +3663,8 @@ Méthode de calcul de l'application :
                 const kind = budgetKind(tx.cat);
                 const muted = kind === "neutre";
                 return (
-                  <div key={tx.id} className="py-2 flex flex-col md:flex-row md:items-center gap-1 md:gap-3" style={{ borderColor: t.border, opacity: muted ? 0.6 : 1 }}>
+                  <div key={tx.id} style={{ borderColor: t.border }}>
+                  <div className="py-2 flex flex-col md:flex-row md:items-center gap-1 md:gap-3" style={{ opacity: muted ? 0.6 : 1 }}>
                     <div className="flex items-center gap-3 flex-1 min-w-0">
                       <span className="text-xs w-12 shrink-0" style={{ color: t.textMuted, ...NUM }}>{fmtDate(tx.d)}{annual && txSort !== "date" && <span className="block text-[10px]">{tx.d.slice(0, 4)}</span>}</span>
                       <span className="text-sm truncate flex-1" style={{ color: t.text }} title={tx.desc}>
@@ -3643,9 +3674,14 @@ Méthode de calcul de l'application :
                         {tx.amt > 0 ? "+" : ""}{fmtEURcents(tx.amt)}
                       </span>
                     </div>
-                    <select value={tx.cat} onChange={(e) => onSetCategory(tx, e.target.value)} className="rounded-lg px-2 py-1 text-xs md:w-48" style={select}>
-                      {BUDGET_CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.id}</option>)}
-                    </select>
+                    <div className="flex items-center gap-1">
+                      <select value={tx.cat} onChange={(e) => onSetCategory(tx, e.target.value)} className="flex-1 rounded-lg px-2 py-1 text-xs md:w-48" style={select}>
+                        {BUDGET_CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.id}</option>)}
+                      </select>
+                      <NoteButton tx={tx} editing={noteEdit === tx.id} onToggle={() => setNoteEdit(noteEdit === tx.id ? null : tx.id)} />
+                    </div>
+                  </div>
+                  <NoteBlock tx={tx} editing={noteEdit === tx.id} onSave={(v) => { onSetNote(tx.id, v); setNoteEdit(null); }} onCancel={() => setNoteEdit(null)} />
                   </div>
                 );
               })}
@@ -3688,7 +3724,7 @@ Méthode de calcul de l'application :
     const KIND_LABEL = { revenu: "Revenus", depense: "Dépenses", epargne: "Versements vers les placements", neutre: "Virements entre mes comptes" };
     const shortMonth = (p) => periodeDate(p).toLocaleDateString("fr-FR", { month: "short", year: "2-digit" });
 
-    function OperationsTab({ transactions, onImport, onSetCategory, onBulkCategory }) {
+    function OperationsTab({ transactions, onImport, onSetCategory, onBulkCategory, onSetNote }) {
       const t = useTheme();
       const isMobile = useIsMobile();
       const [period, setPeriod] = useState("all");
@@ -3700,6 +3736,7 @@ Méthode de calcul de l'application :
       const [maxAmt, setMaxAmt] = useState("");
       const [sens, setSens] = useState("all");
       const [sortBy, setSortBy] = useState("date");
+      const [noteEdit, setNoteEdit] = useState(null);
       const [limit, setLimit] = useState(150);
       const [selected, setSelected] = useState(() => new Set());
       const [bulkCat, setBulkCat] = useState("Famille & proches");
@@ -3719,7 +3756,7 @@ Méthode de calcul de l'application :
           (filterSource === "all" || (tx.src || "revolut") === filterSource) &&
           (sens === "all" || (sens === "out" ? tx.amt < 0 : tx.amt > 0)) &&
           (lo === null || Math.abs(tx.amt) >= lo) && (hi === null || Math.abs(tx.amt) <= hi) &&
-          (!q || normTxt(`${tx.desc} ${tx.detail || ""} ${tx.cat}`).includes(q))
+          (!q || normTxt(`${tx.desc} ${tx.detail || ""} ${tx.cat} ${tx.note || ""}`).includes(q))
         );
       }, [transactions, period, filterSource, search, minAmt, maxAmt, sens]);
       const visible = useMemo(() => scoped
@@ -3795,7 +3832,7 @@ Méthode de calcul de l'application :
                 {sources.map((s) => <option key={s} value={s}>{sourceLabel(s)}</option>)}
               </select>
             )}
-            <input value={search} onChange={(e) => { setSearch(e.target.value); setLimit(150); }} placeholder="Rechercher un libellé…"
+            <input value={search} onChange={(e) => { setSearch(e.target.value); setLimit(150); }} placeholder="Rechercher un libellé ou un commentaire…"
               className="rounded-lg px-3 py-1.5 text-sm flex-1 min-w-[160px]" style={select} />
             <div className="w-full flex flex-wrap items-center gap-2 text-sm">
               <select value={sens} onChange={(e) => { setSens(e.target.value); setLimit(150); }} className="rounded-lg px-2 py-1.5 text-sm" style={select}>
@@ -3952,7 +3989,8 @@ Méthode de calcul de l'application :
                   {items.map((tx) => {
                     const kind = budgetKind(tx.cat);
                     return (
-                      <div key={tx.id} className="py-2 flex flex-col md:flex-row md:items-center gap-1 md:gap-3" style={{ borderBottom: `1px solid ${t.border}`, opacity: kind === "neutre" ? 0.65 : 1 }}>
+                      <div key={tx.id} style={{ borderBottom: `1px solid ${t.border}` }}>
+                      <div className="py-2 flex flex-col md:flex-row md:items-center gap-1 md:gap-3" style={{ opacity: kind === "neutre" ? 0.65 : 1 }}>
                         <div className="flex items-center gap-2 md:gap-3 flex-1 min-w-0">
                           <input type="checkbox" checked={selected.has(tx.id)} onChange={() => toggle(tx.id)} className="shrink-0" />
                           <span className="text-xs w-12 shrink-0" style={{ color: t.textMuted, ...NUM }}>{fmtDate(tx.d)}{sortBy !== "date" && <span className="block text-[10px]">{tx.d.slice(0, 4)}</span>}</span>
@@ -3966,9 +4004,14 @@ Méthode de calcul de l'application :
                             {tx.amt > 0 ? "+" : ""}{fmtEURcents(tx.amt)}
                           </span>
                         </div>
-                        <select value={tx.cat} onChange={(e) => onSetCategory(tx, e.target.value)} className="rounded-lg px-2 py-1 text-xs md:w-48" style={select}>
-                          {BUDGET_CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.id}</option>)}
-                        </select>
+                        <div className="flex items-center gap-1">
+                          <select value={tx.cat} onChange={(e) => onSetCategory(tx, e.target.value)} className="flex-1 rounded-lg px-2 py-1 text-xs md:w-48" style={select}>
+                            {BUDGET_CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.id}</option>)}
+                          </select>
+                          <NoteButton tx={tx} editing={noteEdit === tx.id} onToggle={() => setNoteEdit(noteEdit === tx.id ? null : tx.id)} />
+                        </div>
+                      </div>
+                      <NoteBlock tx={tx} editing={noteEdit === tx.id} onSave={(v) => { onSetNote(tx.id, v); setNoteEdit(null); }} onCancel={() => setNoteEdit(null)} />
                       </div>
                     );
                   })}
@@ -4130,7 +4173,7 @@ Méthode de calcul de l'application :
         setBudgetTx((prev) => {
           const upd = new Map(settled.map((tx) => [tx.id, tx]));
           return [...prev.map((tx) => {
-            if (upd.has(tx.id)) return { ...upd.get(tx.id), cat: tx.cat, ...(tx.manual ? { manual: true } : {}) };
+            if (upd.has(tx.id)) return { ...upd.get(tx.id), cat: tx.cat, ...(tx.manual ? { manual: true } : {}), ...(tx.note ? { note: tx.note } : {}) };
             if (recat.has(tx.id)) return { ...tx, cat: recat.get(tx.id) };
             return tx;
           }), ...fresh];
@@ -4170,6 +4213,15 @@ Méthode de calcul de l'application :
           setBudgetTx((prev) => prev.map((x) => (ids.has(x.id) ? { ...x, cat } : x)));
         }
         setCatPrompt(null);
+      };
+      // Commentaire : texte vide = suppression (pas de champ undefined, refusé par Firestore)
+      const handleSetNote = (id, text) => {
+        const v = String(text || "").trim();
+        setBudgetTx((prev) => prev.map((x) => {
+          if (x.id !== id) return x;
+          const { note, ...rest } = x;
+          return v ? { ...rest, note: v } : rest;
+        }));
       };
       const handleBulkCategory = (ids, cat) => {
         const set = new Set(ids);
@@ -4649,6 +4701,7 @@ Méthode de calcul de l'application :
                   onSetLimit={handleSetBudgetLimit}
                   onImport={handleBudgetImport}
                   onSetCategory={handleBudgetCategory}
+                  onSetNote={handleSetNote}
                   onDeleteRule={handleDeleteBudgetRule}
                   onDeleteMonth={handleDeleteBudgetMonth}
                 />
@@ -4660,6 +4713,7 @@ Méthode de calcul de l'application :
                   onImport={handleBudgetImport}
                   onSetCategory={handleBudgetCategory}
                   onBulkCategory={handleBulkCategory}
+                  onSetNote={handleSetNote}
                 />
               )}
 
