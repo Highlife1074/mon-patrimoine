@@ -3119,7 +3119,7 @@ Méthode de calcul de l'application :
       const isMobile = useIsMobile();
       return (
         <div>
-          <ChartLegend items={[{ label: "Revenus", color: t.s3 }, { label: "Dépenses", color: t.s2 }]} />
+          <ChartLegend items={[{ label: "Salaires", color: t.s3 }, { label: "Autres revenus", color: t.s1 }, { label: "Dépenses", color: t.s2 }]} />
           <ResponsiveContainer width="100%" height={isMobile ? 220 : 280}>
             <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barCategoryGap="25%" barGap={2}>
               <CartesianGrid stroke={t.border} vertical={false} />
@@ -3141,16 +3141,17 @@ Méthode de calcul de l'application :
                   return (
                     <div className="space-y-1 text-xs" style={{ ...tooltipStyle(t), minWidth: 210 }}>
                       <div className="font-semibold" style={{ color: t.text }}>{monthLong(p.periode)}</div>
-                      {row("Revenus", p.revenus, t.s3)}
-                      <div className="pl-3.5 text-[11px]" style={{ color: t.textMuted }}>dont salaires {fmtEUR(p.salaire)}</div>
+                      {row("Salaires", p.salaire, t.s3)}
+                      {row("Autres revenus", p.autresRevenus, t.s1)}
                       {row("Dépenses", p.depenses, t.s2)}
-                      <div className="pt-1 mt-1" style={{ borderTop: `1px solid ${t.border}` }}>{row("Reste (revenus − dépenses)", p.solde, null, true)}</div>
+                      <div className="pt-1 mt-1" style={{ borderTop: `1px solid ${t.border}` }}>{row("Écart (revenus − dépenses)", p.solde, null, true)}</div>
                     </div>
                   );
                 }}
               />
               <ReferenceLine y={0} stroke={t.textMuted} strokeOpacity={0.6} />
-              <Bar dataKey="revenus" fill={t.s3} radius={[4, 4, 0, 0]} maxBarSize={20} />
+              <Bar dataKey="salaire" stackId="rev" fill={t.s3} stroke={t.panel} strokeWidth={1} maxBarSize={20} />
+              <Bar dataKey="autresRevenus" stackId="rev" fill={t.s1} stroke={t.panel} strokeWidth={1} radius={[4, 4, 0, 0]} maxBarSize={20} />
               <Bar dataKey="depenses" fill={t.s2} radius={[4, 4, 0, 0]} maxBarSize={20} />
             </BarChart>
           </ResponsiveContainer>
@@ -3254,16 +3255,19 @@ Méthode de calcul de l'application :
             </button>
           </div>
 
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 md:gap-4">
             <KPICard icon={Briefcase} label="Salaires" value={fmtEUR(current.salaire)}
-              sub={annual ? `${fmtEUR(current.salaire / nMonths)} / mois sur ${nMonths} mois${current.autresRevenus ? ` · + ${fmtEUR(current.autresRevenus)} d'autres revenus` : ""}`
-                : current.autresRevenus ? `+ ${fmtEUR(current.autresRevenus)} d'autres revenus` : `Moyenne 12 mois : ${fmtEUR(avg("salaire"))}`} />
+              sub={annual ? `${fmtEUR(current.salaire / nMonths)} / mois sur ${nMonths} mois` : `Moyenne 12 mois : ${fmtEUR(avg("salaire"))}`} />
+            <KPICard icon={TrendingUp} label="Autres revenus" value={fmtEUR(current.autresRevenus)}
+              sub={isMobile ? "Notes de frais, CAF, remb." : "Notes de frais, CAF, indemnités, remboursements…"} />
             <KPICard icon={ArrowDownRight} label="Dépenses" value={fmtEUR(current.depenses)}
               sub={annual ? `${fmtEUR(current.depenses / nMonths)} / mois sur ${nMonths} mois` : `Moyenne 12 mois : ${fmtEUR(avg("depenses"))}`} />
-            <KPICard icon={Wallet} label="Reste (revenus − dépenses)" value={signed(current.solde)}
+            <KPICard icon={Wallet} label="Écart (revenus − dépenses)" value={signed(current.solde)}
               sub={current.tauxEpargne !== null ? `${Math.round(current.tauxEpargne * 100)} % des revenus mis de côté` : (annual ? "Pas de revenu cette année" : "Pas de revenu ce mois-ci")} tone={current.solde >= 0 ? "up" : "down"} />
-            <KPICard icon={PiggyBank} label="Versé vers les placements" value={fmtEUR(current.epargne)}
-              sub={isMobile ? "Net des retraits" : "Courtiers, assurance vie, crypto… nets des retraits"} />
+            <div className="col-span-2 lg:col-span-1 grid">
+              <KPICard icon={PiggyBank} label="Versé vers les placements" value={fmtEUR(current.epargne)}
+                sub={isMobile ? "Net des retraits, pris sur l'écart" : "Courtiers, assurance vie, crypto… nets des retraits"} />
+            </div>
           </div>
 
           <Panel title="Revenus et dépenses par mois" subtitle="Comptes Revolut et LCL, hors virements entre vos comptes et versements vers les placements">
@@ -3276,20 +3280,20 @@ Méthode de calcul de l'application :
                 <table className="w-full text-xs" style={{ ...NUM, borderCollapse: "collapse" }}>
                   <thead>
                     <tr style={{ color: t.textMuted }}>
-                      {["Mois", "Salaires", "Autres revenus", "Dépenses", "Reste", "Placements"].map((h, i) => (
-                        <th key={h} className={`py-1.5 px-2 font-medium whitespace-nowrap ${i ? "text-right" : "text-left"}`}>{h}</th>
+                      {["Mois", "Salaires", isMobile ? "Autres" : "Autres revenus", "Dépenses", "Écart", "Placements"].map((h, i) => (
+                        <th key={h} className={`py-1.5 px-2 font-medium whitespace-nowrap ${i ? "text-right" : "text-left"} ${i === 5 ? "hidden md:table-cell" : ""}`}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {yearMonths.map((m) => (
                       <tr key={m.periode} onClick={() => { setMode("mois"); setPeriode(m.periode); }} className="cursor-pointer" style={{ borderTop: `1px solid ${t.border}` }}>
-                        <td className="py-1.5 px-2 capitalize whitespace-nowrap" style={{ color: t.text }}>{periodeDate(m.periode).toLocaleDateString("fr-FR", { month: "long" })}</td>
+                        <td className="py-1.5 px-2 capitalize whitespace-nowrap" style={{ color: t.text }}>{periodeDate(m.periode).toLocaleDateString("fr-FR", { month: isMobile ? "short" : "long" })}</td>
                         <td className="py-1.5 px-2 text-right" style={{ color: t.text }}>{fmtEUR(m.salaire)}</td>
                         <td className="py-1.5 px-2 text-right" style={{ color: t.textMuted }}>{fmtEUR(m.autresRevenus)}</td>
                         <td className="py-1.5 px-2 text-right" style={{ color: t.text }}>{fmtEUR(m.depenses)}</td>
                         <td className="py-1.5 px-2 text-right font-medium" style={{ color: m.solde >= 0 ? t.gain : t.loss }}>{signed(m.solde)}</td>
-                        <td className="py-1.5 px-2 text-right" style={{ color: t.textMuted }}>{fmtEUR(m.epargne)}</td>
+                        <td className="py-1.5 px-2 text-right hidden md:table-cell" style={{ color: t.textMuted }}>{fmtEUR(m.epargne)}</td>
                       </tr>
                     ))}
                     <tr style={{ borderTop: `2px solid ${t.border}` }}>
@@ -3298,7 +3302,7 @@ Méthode de calcul de l'application :
                       <td className="py-2 px-2 text-right font-semibold" style={{ color: t.text }}>{fmtEUR(current.autresRevenus)}</td>
                       <td className="py-2 px-2 text-right font-semibold" style={{ color: t.text }}>{fmtEUR(current.depenses)}</td>
                       <td className="py-2 px-2 text-right font-semibold" style={{ color: current.solde >= 0 ? t.gain : t.loss }}>{signed(current.solde)}</td>
-                      <td className="py-2 px-2 text-right font-semibold" style={{ color: t.text }}>{fmtEUR(current.epargne)}</td>
+                      <td className="py-2 px-2 text-right font-semibold hidden md:table-cell" style={{ color: t.text }}>{fmtEUR(current.epargne)}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -3307,7 +3311,7 @@ Méthode de calcul de l'application :
                 <div className="mt-4 flex flex-wrap gap-x-6 gap-y-1 text-xs" style={{ color: t.textMuted }}>
                   {incomeRows.map((r) => (
                     <button key={r.cat} onClick={() => setFilterCat(filterCat === r.cat ? "all" : r.cat)} style={{ fontWeight: filterCat === r.cat ? 700 : 400 }}>
-                      {r.cat} : <span style={{ color: t.text, ...NUM }}>{fmtEUR(r.value)}</span> → voir les opérations
+                      Voir les opérations « {r.cat} » →
                     </button>
                   ))}
                 </div>
