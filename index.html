@@ -45,7 +45,7 @@
       Wallet, TrendingUp, PiggyBank, Percent, Plus, Moon, Sun,
       ChevronDown, ChevronRight, ChevronLeft, X, ArrowUpRight, ArrowDownRight,
       Link2, Check, Clock, ArrowLeftRight, RefreshCw, Download, Upload, LogOut,
-      LayoutDashboard, Briefcase, History, MoreHorizontal, MessageCircle, Send, KeyRound
+      LayoutDashboard, Briefcase, History, MoreHorizontal, MessageCircle, Send, KeyRound, Receipt
     } from "lucide-react";
     
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
@@ -323,6 +323,173 @@
       const headers = (grid[0] || []).map((h) => (h === null || h === undefined ? "" : String(h)));
       const rows = grid.slice(1).map((r) => headers.map((_, i) => (r[i] === null || r[i] === undefined ? "" : r[i])));
       return { headers, rows };
+    }
+
+    // ================== BUDGET (relevés Revolut) ==================
+    // Nature de chaque catégorie : revenu, dépense, épargne (vers les placements) ou neutre (entre mes comptes)
+    const BUDGET_CATEGORIES = [
+      { id: "Salaire", kind: "revenu" },
+      { id: "Autres revenus", kind: "revenu" },
+      { id: "Logement & énergie", kind: "depense" },
+      { id: "Courses", kind: "depense" },
+      { id: "Restaurants & sorties", kind: "depense" },
+      { id: "Transport", kind: "depense" },
+      { id: "Shopping", kind: "depense" },
+      { id: "Abonnements & télécom", kind: "depense" },
+      { id: "Santé", kind: "depense" },
+      { id: "Loisirs & voyages", kind: "depense" },
+      { id: "Impôts & taxes", kind: "depense" },
+      { id: "Frais bancaires", kind: "depense" },
+      { id: "Retraits espèces", kind: "depense" },
+      { id: "Autres dépenses", kind: "depense" },
+      { id: "Épargne / placements", kind: "epargne" },
+      { id: "Virement interne", kind: "neutre" },
+    ];
+    const BUDGET_KIND = Object.fromEntries(BUDGET_CATEGORIES.map((c) => [c.id, c.kind]));
+    const budgetKind = (cat) => BUDGET_KIND[cat] || "depense";
+
+    const BUDGET_KEYWORDS = [
+      ["Épargne / placements", /trade ?republic|interactive ?brokers|ibkr|degiro|nalo|binance|boursorama|bourse ?direct|premi[eè]re brique|homunity|scpi|linxea|yomoni|finary|amundi|natixis interepargne|epargne salariale|bitpanda|coinbase|kraken/i],
+      ["Virement interne", /\blcl\b|cr[eé]dit lyonnais|pocket|coffre|vault|savings|[ée]pargne revolut|exchanged? to|change en|^to (eur|usd|gbp|chf)\b|^vers (eur|usd)\b/i],
+      ["Impôts & taxes", /dgfip|imp[oô]ts?|tr[eé]sor public|amende|antai|urssaf|taxe/i],
+      ["Logement & énergie", /loyer|\bedf\b|engie|veolia|suez|eau de|syndic|foncia|nexity|assurance habitation|ekwateur|mint energie|octopus|gaz de/i],
+      ["Abonnements & télécom", /netflix|spotify|disney|deezer|canal ?\+|amazon ?prime|prime video|apple\.com|itunes|icloud|google|youtube|openai|chatgpt|anthropic|claude\.ai|\bfree\b|free mobile|orange|\bsfr\b|bouygues|sosh|red by|adobe|microsoft|dropbox|audible|molotov|dazn|bein/i],
+      ["Courses", /carrefour|leclerc|auchan|lidl|aldi|intermarch|monoprix|franprix|casino|picard|super ?u\b|hyper ?u\b|u express|biocoop|naturalia|grand frais|vie claire|netto|\bcora\b|\bmatch\b|\bg20\b|\bspar\b|proxi|lafayette gourmet|la grande [ée]picerie|boucherie|primeur|fromager/i],
+      ["Restaurants & sorties", /restaurant|\bresto|brasserie|bistro|caf[eé]\b|\bbar\b|mcdonald|mc ?do|burger|kfc|starbucks|uber ?eats|deliveroo|just ?eat|sushi|pizza|kebab|boulangerie|patisserie|p[aâ]tisserie|traiteur|cr[eê]perie|brewdog|five guys|o'?tacos|big mamma|pret a manger|columbus/i],
+      ["Transport", /sncf|ouigo|trainline|ratp|navigo|\buber\b(?! ?eats)|\bbolt\b|heetch|blablacar|esso|shell|\bbp\b|avia|total ?energies|total access|carburant|station|p[eé]age|vinci autoroute|sanef|aprr|\basf\b|parking|indigo|onepark|air ?france|easyjet|ryanair|transavia|vueling|lufthansa|\blime\b|velib|getaround|\btier\b|\bdott\b|marcel|g7 /i],
+      ["Santé", /pharmacie|pharmacy|m[eé]decin|docteur|\bdr\b|doctolib|dentiste|kin[eé]|mutuelle|h[oô]pital|clinique|laboratoire|opticien|optique|cpam|ost[eé]opathe/i],
+      ["Loisirs & voyages", /booking|airbnb|h[oô]tel|cin[eé]ma|\bugc\b|path[eé]|gaumont|ticketmaster|fnac spectacles|steam|playstation|nintendo|xbox|basic ?fit|fitness|salle de sport|club med|expedia|mus[eé]e|parc |golf|ski|abritel|lastminute|opodo|kayak/i],
+      ["Shopping", /amazon|fnac|darty|zara|h ?& ?m|uniqlo|decathlon|ikea|leroy merlin|castorama|boulanger|apple store|sephora|\baction\b|cdiscount|vinted|aliexpress|shein|zalando|temu|primark|redoute|galeries lafayette|printemps|nike|adidas|kiabi|celio|jules|etsy|ebay/i],
+      ["Retraits espèces", /retrait|cash withdrawal|\batm\b|distributeur/i],
+      ["Frais bancaires", /frais|\bfees?\b|commission|plan (premium|metal|plus|ultra)|abonnement revolut/i],
+      ["Salaire", /salaire|salary|payroll|\bpaie\b|wages|r[eé]mun[eé]ration/i],
+    ];
+
+    // Type d'opération Revolut (export anglais ou français) ramené à un code commun
+    function revolutType(raw) {
+      const s = String(raw || "").toLowerCase();
+      if (/exchange|change/.test(s)) return "change";
+      if (/top ?up|topup|recharge|ajout/.test(s)) return "recharge";
+      if (/refund|rembours/.test(s)) return "remboursement";
+      if (/atm|retrait/.test(s)) return "retrait";
+      if (/fee|frais/.test(s)) return "frais";
+      if (/card|carte/.test(s)) return "carte";
+      if (/interest|int[eé]r[eê]t|cashback|reward|r[eé]compense/.test(s)) return "interet";
+      if (/transfer|virement/.test(s)) return "virement";
+      return s || "autre";
+    }
+
+    // Clé d'apprentissage : libellé sans chiffres ni ponctuation ("Carrefour City 1234" → "carrefour city")
+    const budgetKey = (desc) => String(desc || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
+      .replace(/[0-9*#/\\.,:;_'"()\-]+/g, " ").replace(/\s+/g, " ").trim();
+
+    function categorizeTx(tx, rules) {
+      const learned = rules?.[budgetKey(tx.desc)];
+      if (learned) return learned;
+      if (tx.type === "change") return "Virement interne";
+      if (/savings|[ée]pargne|pocket|coffre|vault/i.test(tx.product || "")) return "Virement interne";
+      const hit = BUDGET_KEYWORDS.find(([cat, re]) => re.test(tx.desc) && (cat !== "Salaire" || tx.amt > 0));
+      if (hit) return hit[0];
+      if (tx.type === "recharge") return "Virement interne";
+      if (tx.type === "retrait") return "Retraits espèces";
+      if (tx.type === "frais") return "Frais bancaires";
+      if (tx.type === "interet") return "Autres revenus";
+      return tx.amt >= 0 ? "Autres revenus" : "Autres dépenses";
+    }
+
+    // Date Revolut : "2026-10-03 14:22:10", "03/10/2026 14:22" ou numéro de série Excel
+    function parseAnyDate(raw) {
+      if (raw === null || raw === undefined || raw === "") return null;
+      if (typeof raw === "number" && isFinite(raw)) {
+        const d = new Date(Math.round((raw - 25569) * 86400 * 1000));
+        return d.toISOString().slice(0, 19).replace("T", " ");
+      }
+      if (raw instanceof Date) return raw.toISOString().slice(0, 19).replace("T", " ");
+      const s = String(raw).trim();
+      let m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+      if (m) return `${m[1]}-${m[2]}-${m[3]} ${m[4] || "00"}:${m[5] || "00"}:${m[6] || "00"}`;
+      m = s.match(/^(\d{1,2})[/.](\d{1,2})[/.](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+      if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")} ${(m[4] || "0").padStart(2, "0")}:${m[5] || "00"}:${m[6] || "00"}`;
+      const d = new Date(s);
+      return isNaN(d) ? null : d.toISOString().slice(0, 19).replace("T", " ");
+    }
+
+    function hashStr(s) {
+      let h = 5381;
+      for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+      return h.toString(36);
+    }
+
+    // Lit un export Revolut (CSV ou Excel, en anglais ou en français) et renvoie les opérations en euros
+    function parseRevolutRows(headers, rows, rules) {
+      const find = (re) => headers.findIndex((h) => re.test(String(h).trim()));
+      const col = {
+        type: find(/^type$/i),
+        product: find(/^(product|produit)$/i),
+        started: find(/started|d[ée]but|^date$/i),
+        completed: find(/completed|date de fin|termin/i),
+        desc: find(/^(description|libell[ée])$/i),
+        amount: find(/^(amount|montant)$/i),
+        fee: find(/^(fee|frais)$/i),
+        currency: find(/^(currency|devise)$/i),
+        state: find(/^(state|[ée]tat|statut)$/i),
+      };
+      if (col.amount < 0 || col.desc < 0 || (col.started < 0 && col.completed < 0)) {
+        throw new Error("ce fichier ne ressemble pas à un relevé Revolut (colonnes Date / Description / Montant introuvables)");
+      }
+      const seen = new Map();
+      const out = [];
+      let skippedCurrency = 0, skippedState = 0;
+      rows.forEach((r) => {
+        const state = col.state >= 0 ? String(r[col.state] || "") : "";
+        if (/revert|declin|fail|annul|refus|rejet/i.test(state)) { skippedState++; return; }
+        const currency = col.currency >= 0 ? String(r[col.currency] || "EUR").trim().toUpperCase() : "EUR";
+        if (currency && currency !== "EUR") { skippedCurrency++; return; }
+        const when = parseAnyDate(col.started >= 0 ? r[col.started] : null) || parseAnyDate(r[col.completed]);
+        const amount = num(r[col.amount]);
+        if (!when || !isFinite(amount)) return;
+        const fee = col.fee >= 0 ? num(r[col.fee]) : 0;
+        const amt = Math.round((amount - (isFinite(fee) ? Math.abs(fee) : 0)) * 100) / 100;
+        if (amt === 0) return;
+        const desc = String(r[col.desc] || "").trim();
+        const base = `${when}|${desc}|${amount}`;
+        const n = (seen.get(base) || 0) + 1;
+        seen.set(base, n);
+        const tx = {
+          id: hashStr(`${base}|${n}`),
+          d: when.slice(0, 10),
+          desc,
+          amt,
+          type: revolutType(col.type >= 0 ? r[col.type] : ""),
+          product: col.product >= 0 ? String(r[col.product] || "") : "",
+        };
+        if (/pending|attente|en cours/i.test(state)) tx.pending = true;
+        tx.cat = categorizeTx(tx, rules);
+        out.push(tx);
+      });
+      return { transactions: out, skippedCurrency, skippedState };
+    }
+
+    // Synthèse par mois calendaire : revenus, dépenses nettes des remboursements, épargne, détail par catégorie
+    function buildBudgetMonths(transactions) {
+      const byMonth = new Map();
+      transactions.forEach((tx) => {
+        const p = tx.d.slice(0, 7);
+        if (!byMonth.has(p)) byMonth.set(p, { periode: p, salaire: 0, autresRevenus: 0, revenus: 0, depenses: 0, epargne: 0, interne: 0, byCat: {}, count: 0 });
+        const m = byMonth.get(p);
+        const kind = budgetKind(tx.cat);
+        m.count++;
+        m.byCat[tx.cat] = (m.byCat[tx.cat] || 0) + tx.amt;
+        if (kind === "revenu") {
+          m.revenus += tx.amt;
+          if (tx.cat === "Salaire") m.salaire += tx.amt; else m.autresRevenus += tx.amt;
+        } else if (kind === "depense") m.depenses -= tx.amt;
+        else if (kind === "epargne") m.epargne -= tx.amt;
+        else m.interne += tx.amt;
+      });
+      return Array.from(byMonth.values())
+        .sort((a, b) => a.periode.localeCompare(b.periode))
+        .map((m) => ({ ...m, solde: m.revenus - m.depenses, tauxEpargne: m.revenus > 0 ? (m.revenus - m.depenses) / m.revenus : null }));
     }
 
     const KNOWN_SECURITIES = {
@@ -2384,6 +2551,8 @@
     // ================== CHAT CLAUDE ==================
     // La clé API est rattachée au compte connecté : un document Firebase par utilisateur.
     const claudeKeyRef = (uid) => doc(db, "patrimoine", `claude_${uid}`);
+    const budgetMetaRef = doc(db, "patrimoine", "budget");
+    const budgetYearRef = (y) => doc(db, "patrimoine", `budget_${y}`);
 
     const CHAT_INSTRUCTIONS = `Tu es l'assistant de l'application « Mon patrimoine », un tableau de bord personnel de suivi de patrimoine.
 L'utilisateur te pose des questions sur ses chiffres : réponds en français, de façon concise, en t'appuyant uniquement sur les données fournies ci-dessous.
@@ -2402,7 +2571,7 @@ Méthode de calcul de l'application :
 - Bilan annuel : rendement de l'année = gain de l'année / patrimoine en début d'année.
 - Les virements validés non rattachés à un relevé sont ajoutés aux flux.`;
 
-    function buildChatContext({ monthlyEff, monthlyMetrics, yearlyMetrics, positions, transfers, kpis }) {
+    function buildChatContext({ monthlyEff, monthlyMetrics, yearlyMetrics, positions, transfers, budgetMonths = [], kpis }) {
       const r = (v) => (typeof v === "number" ? Math.round(v) : v);
       const lines = [];
       lines.push(`Date du jour : ${new Date().toISOString().slice(0, 10)}`);
@@ -2423,6 +2592,14 @@ Méthode de calcul de l'application :
       if (transfers.length) {
         lines.push("\n## Virements (date départ;de;vers;montant;statut;libellé)");
         transfers.forEach((tr) => lines.push([tr.departureDate?.slice(0, 10), tr.sourceAccountId, tr.destinationAccountId, tr.amount, tr.status, tr.label || ""].join(";")));
+      }
+      if (budgetMonths.length) {
+        lines.push("\n## Budget mensuel issu des relevés Revolut (mois calendaire ; montants en € ; dépenses nettes des remboursements, hors virements internes et versements vers les placements)");
+        lines.push("periode;salaires;autresRevenus;depenses;reste;versementsPlacements;detailDepensesParCategorie");
+        budgetMonths.forEach((m) => {
+          const det = Object.entries(m.byCat).filter(([c]) => budgetKind(c) === "depense").map(([c, v]) => `${c}=${r(-v)}`).join(", ");
+          lines.push([m.periode, m.salaire, m.autresRevenus, m.depenses, m.solde, m.epargne].map(r).join(";") + `;${det}`);
+        });
       }
       return lines.join("\n");
     }
@@ -2613,6 +2790,248 @@ Méthode de calcul de l'application :
       );
     }
 
+    // ================== ONGLET BUDGET ==================
+    const monthLong = (p) => periodeDate(p).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+
+    function BudgetImport({ onImport }) {
+      const t = useTheme();
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState("");
+      const [info, setInfo] = useState("");
+      const handleFile = async (file) => {
+        setLoading(true); setError(""); setInfo("");
+        try {
+          if (file.name.toLowerCase().endsWith(".pdf")) throw new Error("le PDF n'est pas lisible ici : dans Revolut, choisissez le format Excel ou CSV pour le relevé");
+          const { headers, rows } = await readFileAsRows(file);
+          if (!headers?.length) throw new Error("fichier vide ou illisible");
+          setInfo(onImport(file, headers, rows));
+        } catch (e) {
+          setError(e.message || "lecture impossible");
+        }
+        setLoading(false);
+      };
+      return (
+        <div className="rounded-xl p-4" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
+          <label className="flex flex-wrap items-center gap-3 cursor-pointer">
+            <span className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium" style={{ background: t.accent, color: t.onAccent }}>
+              <Upload size={15} /> Importer un relevé Revolut
+            </span>
+            <span className="text-xs" style={{ color: t.textMuted }}>Excel ou CSV · les opérations déjà importées sont ignorées</span>
+            <input type="file" accept=".csv,.txt,.tsv,.xlsx,.xls,.pdf" className="hidden" disabled={loading}
+              onChange={(e) => { e.target.files[0] && handleFile(e.target.files[0]); e.target.value = ""; }} />
+          </label>
+          <p className="text-xs mt-2" style={{ color: t.textMuted }}>
+            Dans l'app Revolut : Compte → ⋯ → Relevé → format Excel, période du mois écoulé. Les catégories sont devinées
+            depuis le libellé ; quand vous en corrigez une, l'app retient le marchand pour les relevés suivants.
+          </p>
+          {loading && <p className="text-xs mt-1" style={{ color: t.textMuted }}>Lecture…</p>}
+          {info && <p className="text-xs mt-1" style={{ color: t.gain }}>{info}</p>}
+          {error && <p className="text-xs mt-1" style={{ color: t.loss }}>{error}</p>}
+        </div>
+      );
+    }
+
+    function BudgetMonthlyChart({ data }) {
+      const t = useTheme();
+      const isMobile = useIsMobile();
+      return (
+        <div>
+          <ChartLegend items={[{ label: "Revenus", color: t.s3 }, { label: "Dépenses", color: t.s2 }]} />
+          <ResponsiveContainer width="100%" height={isMobile ? 220 : 280}>
+            <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barCategoryGap="25%" barGap={2}>
+              <CartesianGrid stroke={t.border} vertical={false} />
+              <XAxis dataKey="periode" tickFormatter={monthLabel} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} minTickGap={12} />
+              <YAxis tickFormatter={(v) => `${(v / 1000).toFixed(v && Math.abs(v) < 10000 ? 1 : 0)}k`} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} width={44} />
+              <Tooltip
+                cursor={{ fill: t.panelAlt }}
+                content={({ active, payload }) => {
+                  if (!active || !payload?.length) return null;
+                  const p = payload[0].payload;
+                  const row = (label, v, color, bold) => (
+                    <div className="flex justify-between items-center gap-4">
+                      <span className="flex items-center gap-1.5" style={{ color: t.textMuted }}>
+                        {color && <span className="w-2 h-2 rounded-sm" style={{ background: color }} />}{label}
+                      </span>
+                      <span style={{ color: t.text, fontWeight: bold ? 600 : 400, ...NUM }}>{fmtEUR(v)}</span>
+                    </div>
+                  );
+                  return (
+                    <div className="space-y-1 text-xs" style={{ ...tooltipStyle(t), minWidth: 210 }}>
+                      <div className="font-semibold" style={{ color: t.text }}>{monthLong(p.periode)}</div>
+                      {row("Revenus", p.revenus, t.s3)}
+                      <div className="pl-3.5 text-[11px]" style={{ color: t.textMuted }}>dont salaires {fmtEUR(p.salaire)}</div>
+                      {row("Dépenses", p.depenses, t.s2)}
+                      <div className="pt-1 mt-1" style={{ borderTop: `1px solid ${t.border}` }}>{row("Reste (revenus − dépenses)", p.solde, null, true)}</div>
+                    </div>
+                  );
+                }}
+              />
+              <ReferenceLine y={0} stroke={t.textMuted} strokeOpacity={0.6} />
+              <Bar dataKey="revenus" fill={t.s3} radius={[4, 4, 0, 0]} maxBarSize={20} />
+              <Bar dataKey="depenses" fill={t.s2} radius={[4, 4, 0, 0]} maxBarSize={20} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      );
+    }
+
+    function BudgetTab({ transactions, rules, onImport, onSetCategory, onDeleteRule, onDeleteMonth }) {
+      const t = useTheme();
+      const isMobile = useIsMobile();
+      const months = useMemo(() => buildBudgetMonths(transactions), [transactions]);
+      const [periode, setPeriode] = useState(null);
+      const [filterCat, setFilterCat] = useState("all");
+      const current = months.find((m) => m.periode === periode) || months[months.length - 1];
+      const idx = current ? months.indexOf(current) : -1;
+      const last12 = months.slice(-12);
+      const prev12 = current ? months.filter((m) => m.periode < current.periode).slice(-12) : [];
+
+      const catRows = useMemo(() => {
+        if (!current) return [];
+        return BUDGET_CATEGORIES.filter((c) => c.kind === "depense")
+          .map((c) => {
+            const value = -(current.byCat[c.id] || 0);
+            const avg = prev12.length ? prev12.reduce((s, m) => s - (m.byCat[c.id] || 0), 0) / prev12.length : null;
+            return { cat: c.id, value, avg };
+          })
+          .filter((r) => Math.abs(r.value) >= 0.5 || (r.avg && r.avg >= 1))
+          .sort((a, b) => b.value - a.value);
+      }, [current, prev12]);
+      const maxCat = Math.max(1, ...catRows.map((r) => Math.max(r.value, r.avg || 0)));
+
+      const monthTx = useMemo(() => {
+        if (!current) return [];
+        return transactions
+          .filter((tx) => tx.d.startsWith(current.periode) && (filterCat === "all" || tx.cat === filterCat))
+          .sort((a, b) => b.d.localeCompare(a.d) || a.amt - b.amt);
+      }, [transactions, current, filterCat]);
+
+      const ruleEntries = Object.entries(rules).sort((a, b) => a[0].localeCompare(b[0]));
+      const select = { background: t.panel, color: t.text, border: `1px solid ${t.border}` };
+
+      if (!current) {
+        return (
+          <div className="space-y-4">
+            <BudgetImport onImport={onImport} />
+            <p className="text-sm" style={{ color: t.textMuted }}>Aucune opération pour l'instant : importez votre premier relevé Revolut.</p>
+          </div>
+        );
+      }
+
+      const avg = (key) => (last12.length ? last12.reduce((s, m) => s + m[key], 0) / last12.length : 0);
+
+      return (
+        <div className="space-y-3 md:space-y-5">
+          <BudgetImport onImport={onImport} />
+
+          <div className="flex items-center justify-between gap-2">
+            <button onClick={() => idx > 0 && setPeriode(months[idx - 1].periode)} disabled={idx <= 0} className="p-2 rounded-lg" style={{ color: idx > 0 ? t.text : t.border }}>
+              <ChevronLeft size={18} />
+            </button>
+            <select value={current.periode} onChange={(e) => setPeriode(e.target.value)} className="rounded-lg px-3 py-2 text-sm font-semibold capitalize" style={select}>
+              {months.map((m) => <option key={m.periode} value={m.periode}>{monthLong(m.periode)}</option>)}
+            </select>
+            <button onClick={() => idx < months.length - 1 && setPeriode(months[idx + 1].periode)} disabled={idx >= months.length - 1} className="p-2 rounded-lg" style={{ color: idx < months.length - 1 ? t.text : t.border }}>
+              <ChevronRight size={18} />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+            <KPICard icon={Briefcase} label="Salaires" value={fmtEUR(current.salaire)}
+              sub={current.autresRevenus ? `+ ${fmtEUR(current.autresRevenus)} d'autres revenus` : `Moyenne 12 mois : ${fmtEUR(avg("salaire"))}`} />
+            <KPICard icon={ArrowDownRight} label="Dépenses" value={fmtEUR(current.depenses)}
+              sub={`Moyenne 12 mois : ${fmtEUR(avg("depenses"))}`} />
+            <KPICard icon={Wallet} label="Reste (revenus − dépenses)" value={signed(current.solde)}
+              sub={current.tauxEpargne !== null ? `${Math.round(current.tauxEpargne * 100)} % des revenus mis de côté` : "Pas de revenu ce mois-ci"} tone={current.solde >= 0 ? "up" : "down"} />
+            <KPICard icon={PiggyBank} label="Versé vers les placements" value={fmtEUR(current.epargne)}
+              sub={isMobile ? "Depuis Revolut" : "Virements Revolut vers courtiers, Nalo, crypto…"} />
+          </div>
+
+          <Panel title="Revenus et dépenses par mois" subtitle="Opérations du compte Revolut, hors virements entre vos comptes et versements vers les placements">
+            <BudgetMonthlyChart data={last12} />
+          </Panel>
+
+          <Panel title={`Dépenses par catégorie — ${monthLong(current.periode)}`}
+            subtitle={prev12.length ? `Barre pleine : ce mois-ci · trait : moyenne des ${prev12.length} mois précédents` : "Remboursements déduits de la catégorie concernée"}>
+            <div className="space-y-2.5">
+              {catRows.map((r) => {
+                const over = r.avg !== null && r.avg > 0 && r.value > r.avg * 1.25 && r.value - r.avg > 30;
+                return (
+                  <button key={r.cat} type="button" onClick={() => setFilterCat(filterCat === r.cat ? "all" : r.cat)} className="w-full text-left">
+                    <div className="flex items-center justify-between text-xs mb-1 gap-2">
+                      <span style={{ color: t.text, fontWeight: filterCat === r.cat ? 700 : 500 }}>{r.cat}</span>
+                      <span style={{ color: t.text, ...NUM }}>
+                        {fmtEUR(r.value)}
+                        {r.avg !== null && <span style={{ color: over ? t.warning : t.textMuted }}> · moy. {fmtEUR(r.avg)}{over ? " ▲" : ""}</span>}
+                      </span>
+                    </div>
+                    <div className="relative h-2 rounded-full" style={{ background: t.panelAlt }}>
+                      <div className="h-2 rounded-full" style={{ width: `${Math.max(0, (r.value / maxCat) * 100)}%`, background: t.s2 }} />
+                      {r.avg !== null && r.avg > 0 && (
+                        <div className="absolute -top-0.5 w-0.5 h-3 rounded" style={{ left: `${(r.avg / maxCat) * 100}%`, background: t.text }} />
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </Panel>
+
+          <Panel title={`Opérations — ${monthLong(current.periode)} (${monthTx.length})`}
+            subtitle="Changer une catégorie l'applique aux autres opérations du même marchand et aux prochains relevés"
+            action={
+              <select value={filterCat} onChange={(e) => setFilterCat(e.target.value)} className="rounded-lg px-2 py-1.5 text-xs shrink-0" style={select}>
+                <option value="all">Toutes</option>
+                {BUDGET_CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.id}</option>)}
+              </select>
+            }>
+            <div className="divide-y" style={{ borderColor: t.border }}>
+              {monthTx.map((tx) => {
+                const kind = budgetKind(tx.cat);
+                const muted = kind === "neutre";
+                return (
+                  <div key={tx.id} className="py-2 flex flex-col md:flex-row md:items-center gap-1 md:gap-3" style={{ borderColor: t.border, opacity: muted ? 0.6 : 1 }}>
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                      <span className="text-xs w-12 shrink-0" style={{ color: t.textMuted, ...NUM }}>{fmtDate(tx.d)}</span>
+                      <span className="text-sm truncate flex-1" style={{ color: t.text }} title={tx.desc}>
+                        {tx.desc}{tx.pending && <span className="text-[10px] ml-1" style={{ color: t.warning }}>en attente</span>}
+                      </span>
+                      <span className="text-sm shrink-0 font-medium" style={{ color: tx.amt > 0 ? t.gain : t.text, ...NUM }}>
+                        {tx.amt > 0 ? "+" : ""}{fmtEURcents(tx.amt)}
+                      </span>
+                    </div>
+                    <select value={tx.cat} onChange={(e) => onSetCategory(tx, e.target.value)} className="rounded-lg px-2 py-1 text-xs md:w-48" style={select}>
+                      {BUDGET_CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.id}</option>)}
+                    </select>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-4 flex items-center justify-end gap-2 text-xs" style={{ color: t.textMuted }}>
+              Supprimer les opérations de ce mois
+              <DeleteButton title={`Supprimer les opérations de ${monthLong(current.periode)}`} onConfirm={() => { onDeleteMonth(current.periode); setPeriode(null); }} />
+            </div>
+          </Panel>
+
+          {ruleEntries.length > 0 && (
+            <Panel title={`Marchands mémorisés (${ruleEntries.length})`} subtitle="Catégories que vous avez corrigées : elles s'appliquent automatiquement aux prochains relevés" collapsible defaultCollapsed>
+              <div className="space-y-1">
+                {ruleEntries.map(([key, cat]) => (
+                  <div key={key} className="flex items-center justify-between gap-3 text-xs py-1">
+                    <span className="truncate" style={{ color: t.text }}>{key}</span>
+                    <span className="flex items-center gap-2 shrink-0">
+                      <span style={{ color: t.textMuted }}>{cat}</span>
+                      <button onClick={() => onDeleteRule(key)} title="Oublier" className="p-1 rounded" style={{ color: t.textMuted }}><X size={13} /></button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </Panel>
+          )}
+        </div>
+      );
+    }
+
     function PatrimoineApp() {
       const [themeName, setThemeName] = useState("dark");
       const t = THEMES[themeName];
@@ -2623,6 +3042,10 @@ Méthode de calcul de l'application :
       const [weeklyArchive, setWeeklyArchive] = useState([]);
       const [transfers, setTransfers] = useState(initialTransfers);
       const [recurringTransfers, setRecurringTransfers] = useState([]);
+      // Budget : opérations Revolut importées (un document Firestore par année) et catégories apprises par marchand
+      const [budgetTx, setBudgetTx] = useState([]);
+      const [budgetRules, setBudgetRules] = useState({});
+      const budgetSavedRef = useRef({ meta: null, years: {} });
       const [monthlyModalOpen, setMonthlyModalOpen] = useState(false);
       const [monthlyModalKey, setMonthlyModalKey] = useState(0);
       const [tab, setTab] = useState("dashboard");
@@ -2662,6 +3085,18 @@ Méthode de calcul de l'application :
               if (saved.transfers) setTransfers(saved.transfers);
               if (saved.recurringTransfers) setRecurringTransfers(saved.recurringTransfers);
             }
+            const metaSnap = await getDoc(budgetMetaRef);
+            if (!annule && metaSnap.exists()) {
+              const meta = metaSnap.data();
+              const years = meta.years || [];
+              const snaps = await Promise.all(years.map((y) => getDoc(budgetYearRef(y))));
+              const tx = snaps.flatMap((sn) => (sn.exists() ? sn.data().tx || [] : []));
+              budgetSavedRef.current = {
+                meta: JSON.stringify({ rules: meta.rules || {}, years }),
+                years: Object.fromEntries(years.map((y) => [y, JSON.stringify(tx.filter((x) => x.d.startsWith(y)))])),
+              };
+              if (!annule) { setBudgetRules(meta.rules || {}); setBudgetTx(tx); }
+            }
           } catch (e) {
             console.error("Erreur de chargement Firebase:", e);
           }
@@ -2694,6 +3129,66 @@ Méthode de calcul de l'application :
         return () => clearTimeout(delai);
       }, [positions, monthly, weeklyArchive, transfers, recurringTransfers, loaded]);
 
+      // Sauvegarde du budget : on ne réécrit que les années modifiées
+      useEffect(() => {
+        if (!loaded) return;
+        const delai = setTimeout(async () => {
+          const saved = budgetSavedRef.current;
+          const byYear = {};
+          budgetTx.forEach((tx) => { (byYear[tx.d.slice(0, 4)] ||= []).push(tx); });
+          const years = Object.keys(byYear).sort();
+          const toWrite = [...new Set([...years, ...Object.keys(saved.years)])]
+            .map((y) => [y, JSON.stringify(byYear[y] || [])])
+            .filter(([y, json]) => saved.years[y] !== json);
+          const metaJson = JSON.stringify({ rules: budgetRules, years });
+          if (!toWrite.length && metaJson === saved.meta) return;
+          setSaveStatus("saving");
+          try {
+            await Promise.all(toWrite.map(([y, json]) => setDoc(budgetYearRef(y), { tx: JSON.parse(json) })));
+            if (metaJson !== saved.meta) await setDoc(budgetMetaRef, { rules: budgetRules, years, derniereMiseAJour: new Date().toISOString() });
+            toWrite.forEach(([y, json]) => { if (byYear[y]) saved.years[y] = json; else delete saved.years[y]; });
+            saved.meta = metaJson;
+            setSaveStatus("saved");
+            setLastSaved(new Date());
+          } catch (e) {
+            console.error("Erreur de sauvegarde du budget:", e);
+            setSaveStatus("erreur");
+          }
+        }, 800);
+        return () => clearTimeout(delai);
+      }, [budgetTx, budgetRules, loaded]);
+
+      const handleBudgetImport = (file, headers, rows) => {
+        const { transactions, skippedCurrency, skippedState } = parseRevolutRows(headers, rows, budgetRules);
+        if (!transactions.length) throw new Error("aucune opération en euros trouvée dans ce fichier");
+        const known = new Map(budgetTx.map((tx) => [tx.id, tx]));
+        const fresh = transactions.filter((tx) => !known.has(tx.id));
+        // Une opération « en attente » déjà connue est mise à jour (montant final), sans perdre la catégorie choisie
+        const settled = transactions.filter((tx) => known.get(tx.id)?.pending && !tx.pending);
+        setBudgetTx((prev) => {
+          const upd = new Map(settled.map((tx) => [tx.id, tx]));
+          return [...prev.map((tx) => (upd.has(tx.id) ? { ...upd.get(tx.id), cat: tx.cat, manual: tx.manual } : tx)), ...fresh];
+        });
+        const ds = transactions.map((tx) => tx.d).sort();
+        const parts = [`${fresh.length} nouvelle${fresh.length > 1 ? "s" : ""} opération${fresh.length > 1 ? "s" : ""} (du ${new Date(ds[0]).toLocaleDateString("fr-FR")} au ${new Date(ds[ds.length - 1]).toLocaleDateString("fr-FR")})`];
+        if (transactions.length - fresh.length) parts.push(`${transactions.length - fresh.length} déjà importée${transactions.length - fresh.length > 1 ? "s" : ""}`);
+        if (skippedCurrency) parts.push(`${skippedCurrency} hors euros ignorée${skippedCurrency > 1 ? "s" : ""}`);
+        if (skippedState) parts.push(`${skippedState} annulée${skippedState > 1 ? "s" : ""} ignorée${skippedState > 1 ? "s" : ""}`);
+        return parts.join(" · ");
+      };
+      const handleBudgetCategory = (tx, cat) => {
+        const key = budgetKey(tx.desc);
+        if (key) setBudgetRules((r) => ({ ...r, [key]: cat }));
+        setBudgetTx((prev) => prev.map((x) => {
+          if (x.id === tx.id) return { ...x, cat, manual: true };
+          if (key && !x.manual && budgetKey(x.desc) === key) return { ...x, cat };
+          return x;
+        }));
+      };
+      const handleDeleteBudgetRule = (key) => setBudgetRules(({ [key]: _, ...rest }) => rest);
+      const handleDeleteBudgetMonth = (p) => setBudgetTx((prev) => prev.filter((tx) => !tx.d.startsWith(p)));
+      const budgetMonths = useMemo(() => buildBudgetMonths(budgetTx), [budgetTx]);
+
       const handleReset = () => {
         setPositions(stockPositions);
         setMonthly(initialMonthlySnapshots);
@@ -2703,7 +3198,7 @@ Méthode de calcul de l'application :
       };
 
       const handleExport = () => {
-        const payload = { positions, monthly, weekly: weeklyArchive, transfers, recurringTransfers, seedVersion: SEED_VERSION, exportedAt: new Date().toISOString() };
+        const payload = { positions, monthly, weekly: weeklyArchive, transfers, recurringTransfers, budget: { transactions: budgetTx, rules: budgetRules }, seedVersion: SEED_VERSION, exportedAt: new Date().toISOString() };
         const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -2724,6 +3219,8 @@ Méthode de calcul de l'application :
           if (data.weekly) setWeeklyArchive(data.weekly);
           if (data.transfers) setTransfers(data.transfers);
           if (data.recurringTransfers) setRecurringTransfers(data.recurringTransfers);
+          if (data.budget?.transactions) setBudgetTx(data.budget.transactions);
+          if (data.budget?.rules) setBudgetRules(data.budget.rules);
         } catch (e) {
           alert("Fichier de sauvegarde illisible");
         }
@@ -2863,7 +3360,7 @@ Méthode de calcul de l'application :
         setChatOpen(true);
       };
       const chatContext = useMemo(() => buildChatContext({
-        monthlyEff, monthlyMetrics, yearlyMetrics, positions, transfers,
+        monthlyEff, monthlyMetrics, yearlyMetrics, positions, transfers, budgetMonths,
         kpis: {
           "Patrimoine total": fmtEUR(lastMonthly?.totalWealth),
           "Variation sur le dernier mois": `${fmtEUR(totalWealthChange)} (${fmtPct(lastMonthVariationPct)})`,
@@ -2875,11 +3372,12 @@ Méthode de calcul de l'application :
           "Épargne versée moyenne / an": `${fmtEUR(avgAnnualVersements)} (sur ${monthsTracked} mois)`,
           "Rendement annuel moyen": fmtPct(avgYield),
         },
-      }), [monthlyEff, monthlyMetrics, yearlyMetrics, positions, transfers]);
+      }), [monthlyEff, monthlyMetrics, yearlyMetrics, positions, transfers, budgetMonths]);
 
       const NAV_ITEMS = [
         { id: "dashboard", label: "Tableau de bord", short: "Accueil", icon: LayoutDashboard },
         { id: "positions", label: "Positions", short: "Positions", icon: Briefcase },
+        { id: "budget", label: "Budget", short: "Budget", icon: Receipt },
         { id: "virements", label: "Virements", short: "Virements", icon: ArrowLeftRight },
         { id: "historique", label: "Historique", short: "Historique", icon: History },
       ];
@@ -3045,6 +3543,22 @@ Méthode de calcul de l'application :
                       sub={isMobile ? `Sur ${monthsTracked} mois` : `Ramené à 12 mois (sur ${monthsTracked} mois)`} />
                   </div>
 
+                  {budgetMonths.length > 0 && (() => {
+                    const b = budgetMonths[budgetMonths.length - 1];
+                    return (
+                      <button type="button" onClick={() => goTab("budget")} className="w-full text-left rounded-2xl p-4 md:p-5 flex flex-wrap items-center gap-x-6 gap-y-2"
+                        style={{ background: t.panel, border: `1px solid ${t.border}`, boxShadow: t.shadow }}>
+                        <span className="text-sm font-semibold flex items-center gap-2" style={{ color: t.text }}>
+                          <Receipt size={16} color={t.accent} /> Budget de {monthLong(b.periode)}
+                        </span>
+                        {[["Salaires", fmtEUR(b.salaire)], ["Dépenses", fmtEUR(b.depenses)], ["Reste", signed(b.solde)]].map(([l, v]) => (
+                          <span key={l} className="text-xs" style={{ color: t.textMuted }}>{l} <span className="text-sm font-semibold ml-1" style={{ color: t.text, ...NUM }}>{v}</span></span>
+                        ))}
+                        <ChevronRight size={16} color={t.textMuted} className="ml-auto" />
+                      </button>
+                    );
+                  })()}
+
                   <Panel title="Évolution mensuelle" subtitle="Ce que vos revenus (moins vos dépenses) et vos placements ont apporté au patrimoine, mois par mois"
                     action={
                       <div className="flex shrink-0 p-0.5 rounded-lg text-xs" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
@@ -3118,6 +3632,17 @@ Méthode de calcul de l'application :
                 </Panel>
               )}
 
+              {tab === "budget" && (
+                <BudgetTab
+                  transactions={budgetTx}
+                  rules={budgetRules}
+                  onImport={handleBudgetImport}
+                  onSetCategory={handleBudgetCategory}
+                  onDeleteRule={handleDeleteBudgetRule}
+                  onDeleteMonth={handleDeleteBudgetMonth}
+                />
+              )}
+
               {tab === "virements" && (
                 <Panel title={`Virements (${transfers.length})`}>
                   <TransfersTab
@@ -3151,7 +3676,7 @@ Méthode de calcul de l'application :
                 style={{ bottom: "calc(76px + env(safe-area-inset-bottom))", background: t.accent, color: t.onAccent, boxShadow: `0 8px 24px ${t.accent}66` }}>
                 <Plus size={24} />
               </button>
-              <nav className="fixed bottom-0 inset-x-0 z-40 grid grid-cols-4"
+              <nav className="fixed bottom-0 inset-x-0 z-40 grid grid-cols-5"
                 style={{ background: `${t.panel}f2`, backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", borderTop: `1px solid ${t.border}`, paddingBottom: "env(safe-area-inset-bottom)" }}>
                 {NAV_ITEMS.map((n) => {
                   const Icon = n.icon;
