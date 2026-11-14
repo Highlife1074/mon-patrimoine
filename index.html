@@ -325,7 +325,7 @@
       return { headers, rows };
     }
 
-    // ================== BUDGET (relevés Revolut) ==================
+    // ================== BUDGET (relevés Revolut et LCL) ==================
     // Nature de chaque catégorie : revenu, dépense, épargne (vers les placements) ou neutre (entre mes comptes)
     const BUDGET_CATEGORIES = [
       { id: "Salaire", kind: "revenu" },
@@ -337,6 +337,8 @@
       { id: "Shopping", kind: "depense" },
       { id: "Abonnements & télécom", kind: "depense" },
       { id: "Santé", kind: "depense" },
+      { id: "Assurances", kind: "depense" },
+      { id: "Éducation", kind: "depense" },
       { id: "Loisirs & voyages", kind: "depense" },
       { id: "Impôts & taxes", kind: "depense" },
       { id: "Frais bancaires", kind: "depense" },
@@ -350,20 +352,23 @@
     const budgetKind = (cat) => BUDGET_KIND[cat] || "depense";
 
     const BUDGET_KEYWORDS = [
-      ["Épargne / placements", /trade ?republic|interactive ?brokers|ibkr|degiro|nalo|binance|boursorama|bourse ?direct|premi[eè]re brique|homunity|scpi|linxea|yomoni|finary|amundi|natixis interepargne|epargne salariale|bitpanda|coinbase|kraken/i],
-      ["Virement interne", /\blcl\b|cr[eé]dit lyonnais|pocket|coffre|vault|savings|[ée]pargne revolut|exchanged? to|change en|^to (eur|usd|gbp|chf)\b|^vers (eur|usd)\b/i],
-      ["Impôts & taxes", /dgfip|imp[oô]ts?|tr[eé]sor public|amende|antai|urssaf|taxe/i],
+      ["Épargne / placements", /\bwdr\b|trade ?republic|interactive ?b|ibkr|de ?giro|generali vie|assurance vie|nalo|binance|boursorama|bourse ?direct|premi[eè]re brique|homunity|scpi|linxea|yomoni|finary|amundi|natixis interepargne|epargne salariale|bitpanda|coinbase|kraken/i],
+      ["Virement interne", /\b(vir|virement|transfer|to|from|vers|de)\b.*\b(lcl|cr[eé]dit lyonnais|revolut)\b|pocket|coffre|vault|savings|[ée]pargne revolut|exchanged? to|change en|^to (eur|usd|gbp|chf)\b|^vers (eur|usd)\b/i],
+      ["Autres revenus", /\bcaf\b|allocations? familiales|dividende|p[oô]le emploi|france travail|\bcpam\b|ameli/i],
+      ["Impôts & taxes", /dgfip|finances publiques?|imp[oô]ts?|tr[eé]sor public|amende|antai|urssaf|taxe/i],
       ["Logement & énergie", /loyer|\bedf\b|engie|veolia|suez|eau de|syndic|foncia|nexity|assurance habitation|ekwateur|mint energie|octopus|gaz de/i],
-      ["Abonnements & télécom", /netflix|spotify|disney|deezer|canal ?\+|amazon ?prime|prime video|apple\.com|itunes|icloud|google|youtube|openai|chatgpt|anthropic|claude\.ai|\bfree\b|free mobile|orange|\bsfr\b|bouygues|sosh|red by|adobe|microsoft|dropbox|audible|molotov|dazn|bein/i],
+      ["Abonnements & télécom", /netflix|spotify|disney|deezer|canal ?\+|amazon ?prime|prime video|apple\.com|itunes|icloud|google|youtube|openai|chatgpt|anthropic|claude\.ai|\bfree\b|free mobile|orange|\bsfr\b|bouygues ?tel|sosh|red by|adobe|microsoft|dropbox|audible|molotov|dazn|bein/i],
       ["Courses", /carrefour|leclerc|auchan|lidl|aldi|intermarch|monoprix|franprix|casino|picard|super ?u\b|hyper ?u\b|u express|biocoop|naturalia|grand frais|vie claire|netto|\bcora\b|\bmatch\b|\bg20\b|\bspar\b|proxi|lafayette gourmet|la grande [ée]picerie|boucherie|primeur|fromager/i],
-      ["Restaurants & sorties", /restaurant|\bresto|brasserie|bistro|caf[eé]\b|\bbar\b|mcdonald|mc ?do|burger|kfc|starbucks|uber ?eats|deliveroo|just ?eat|sushi|pizza|kebab|boulangerie|patisserie|p[aâ]tisserie|traiteur|cr[eê]perie|brewdog|five guys|o'?tacos|big mamma|pret a manger|columbus/i],
-      ["Transport", /sncf|ouigo|trainline|ratp|navigo|\buber\b(?! ?eats)|\bbolt\b|heetch|blablacar|esso|shell|\bbp\b|avia|total ?energies|total access|carburant|station|p[eé]age|vinci autoroute|sanef|aprr|\basf\b|parking|indigo|onepark|air ?france|easyjet|ryanair|transavia|vueling|lufthansa|aegean|sky ?express|airlines?|airways|\blime\b|velib|getaround|\btier\b|\bdott\b|marcel|g7 /i],
-      ["Santé", /pharmacie|pharmacy|m[eé]decin|docteur|\bdr\b|doctolib|dentiste|kin[eé]|mutuelle|h[oô]pital|clinique|laboratoire|opticien|optique|cpam|ost[eé]opathe/i],
+      ["Restaurants & sorties", /restaurant|\bresto|brasserie|bistro|caf[eé]\b|\bbar\b|mcdonald|mc ?do|burger|kfc|starbucks|uber ?eats|deliveroo|just ?eat|sushi|pizza|kebab|boulangerie|patisserie|p[aâ]tisserie|traiteur|cr[eê]perie|brewdog|five guys|o'?tacos|big mamma|pret a manger|columbus|wolt|efood|7[ -]?11|7[ -]?eleven/i],
+      ["Transport", /sncf|ouigo|trainline|ratp|navigo|\buber\b(?! ?eats)|\bbolt\b|heetch|blablacar|esso|shell|\bbp\b|avia|total ?energies|total access|carburant|station|p[eé]age|vinci autoroute|sanef|aprr|\basf\b|parking|indigo|onepark|air ?france|easyjet|ryanair|transavia|vueling|lufthansa|aegean|fuels?\b|car rent|rent a car|enterprise car|hertz|europcar|\bsixt\b|\bavis\b|sky ?express|airlines?|airways|\blime\b|velib|getaround|\btier\b|\bdott\b|marcel|g7 /i],
+      ["Santé", /pharmacie|pharmacy|m[eé]decin|docteur|\bdr\b|doctolib|dentiste|kin[eé]|mutuelle|h[oô]pital|clinique|laboratoire|opticien|optique|ost[eé]opathe|willis towers/i],
+      ["Assurances", /assurance|\bspb\b|securilion|generali|\baxa\b|maif|macif|matmut|allianz|groupama|\bmma\b|april/i],
+      ["Éducation", /[ée]cole|school|scolarit|\bedu|universit|cantine|cr[eè]che|lyc[ée]e|coll[eè]ge|soutien scolaire/i],
       ["Loisirs & voyages", /booking|airbnb|h[oô]tel|cin[eé]ma|\bugc\b|path[eé]|gaumont|ticketmaster|fnac spectacles|steam|playstation|nintendo|xbox|basic ?fit|fitness|salle de sport|club med|expedia|mus[eé]e|parc |golf|ski|abritel|lastminute|opodo|kayak/i],
-      ["Shopping", /amazon|fnac|darty|zara|h ?& ?m|uniqlo|decathlon|ikea|leroy merlin|castorama|boulanger|apple store|sephora|\baction\b|cdiscount|vinted|aliexpress|shein|zalando|temu|primark|redoute|galeries lafayette|printemps|nike|adidas|kiabi|celio|jules|etsy|ebay|skroutz|public\.gr|plaisio|kotsovolos|jumbo/i],
+      ["Shopping", /amazon|fnac|darty|zara|h ?& ?m|uniqlo|decathlon|ikea|leroy merlin|castorama|boulanger|apple store|sephora|\baction\b|cdiscount|vinted|aliexpress|shein|zalando|temu|primark|redoute|galeries lafayette|printemps|nike|adidas|kiabi|celio|jules|etsy|ebay|skroutz|public\.gr|plaisio|kotsovolos|jumbo|le ?bon ?coin/i],
       ["Retraits espèces", /retrait|cash withdrawal|\batm\b|distributeur/i],
-      ["Frais bancaires", /frais|\bfees?\b|commission|plan (premium|metal|plus|ultra)|abonnement revolut/i],
-      ["Salaire", /salaire|salary|payroll|\bpaie\b|wages|r[eé]mun[eé]ration/i],
+      ["Frais bancaires", /frais|\bfees?\b|commission|cotisation mensuelle carte|tenue de compte|remise fidelite|a la carte votre remise|plan (premium|metal|plus|ultra)|abonnement revolut/i],
+      ["Salaire", /salaire|salary|payroll|\bpaie\b|wages|r[eé]mun[eé]ration|bonus|\bprime\b|13[eè]?m?e? mois/i],
     ];
 
     // Type d'opération Revolut (export anglais ou français) ramené à un code commun
@@ -390,19 +395,38 @@
       .replace(/[0-9*#/\\.,:;_'"()\-]+/g, " ").replace(/\s+/g, " ").trim();
     // Clé d'apprentissage : libellé sans chiffres ni ponctuation ("Carrefour City 1234" → "carrefour city").
     // Pour un virement entre particuliers, la clé est la personne : une seule règle couvre l'envoi et la réception.
+    // Virement LCL : « VIR INST NOM », « VIREMENT NOM », « VIR.PERMANENT NOM »… → le tiers
+    const lclCounterparty = (desc) => String(desc || "").match(/^(?:VIR(?:EMENT)?|VIR\.PERMANENT)(?:\s+(?:INST|SEPA))?\s+(.+)$/i)?.[1]?.trim() || null;
     const budgetKey = (desc) => {
       const who = personOf(desc);
-      return who ? `personne ${normTxt(who)}` : normTxt(desc);
+      if (who) return `personne ${normTxt(who)}`;
+      const tiers = lclCounterparty(desc);
+      return tiers ? `tiers ${normTxt(tiers)}` : normTxt(desc);
     };
+    // Virement vers / depuis un compte à vos noms (titulaires lus sur le relevé)
+    function isOwnTransfer(tx) {
+      const tiers = lclCounterparty(tx.desc);
+      if (!tiers || !tx.holders?.length) return false;
+      const words = normTxt(tiers).split(" ");
+      return words.filter((w) => tx.holders.includes(w)).length >= 2 || tx.holders.includes(words[0]);
+    }
 
     function categorizeTx(tx, rules) {
+      // Signal fort dans le libellé détaillé du virement (fiche de paie, note de frais) : prime sur la règle apprise
+      if (tx.amt > 0 && tx.detail) {
+        if (/expense note|exp notes?|note de frais/i.test(tx.detail)) return "Autres revenus";
+        if (/salary|salaire|\bpaie\b|payroll|bonus/i.test(tx.detail)) return "Salaire";
+      }
       const learned = rules?.[budgetKey(tx.desc)];
       if (learned) return learned;
+      if (tx.type === "retrait") return "Retraits espèces";
       if (tx.type === "change") return "Virement interne";
       if (/savings|[ée]pargne|pocket|coffre|vault/i.test(tx.product || "")) return "Virement interne";
-      const kw = (cats) => BUDGET_KEYWORDS.find(([cat, re]) => cats.includes(cat) && re.test(tx.desc) && (cat !== "Salaire" || tx.amt > 0))?.[0];
+      const text = `${tx.desc} ${tx.detail || ""}`;
+      const kw = (cats) => BUDGET_KEYWORDS.find(([cat, re]) => cats.includes(cat) && re.test(text) && (budgetKind(cat) !== "revenu" || tx.amt > 0))?.[0];
       const prioritaire = kw(["Épargne / placements", "Virement interne", "Salaire"]);
       if (prioritaire) return prioritaire;
+      if (isOwnTransfer(tx)) return "Virement interne";
       const who = personOf(tx.desc);
       if (who) return isJointAccount(who) || tx.type === "recharge" ? "Virement interne" : "Famille & proches";
       const hit = kw(BUDGET_KEYWORDS.map(([c]) => c));
@@ -509,6 +533,121 @@
       return Array.from(byMonth.values())
         .sort((a, b) => a.periode.localeCompare(b.periode))
         .map((m) => ({ ...m, solde: m.revenus - m.depenses, tauxEpargne: m.revenus > 0 ? (m.revenus - m.depenses) / m.revenus : null }));
+    }
+
+    // ================== RELEVÉS LCL (PDF) ==================
+    const PDFJS_VERSION = "3.11.174";
+    let pdfjsPromise = null;
+    function loadPdfJs() {
+      if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+      pdfjsPromise ||= new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.min.js`;
+        s.onload = () => {
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.worker.min.js`;
+          resolve(window.pdfjsLib);
+        };
+        s.onerror = () => { pdfjsPromise = null; reject(new Error("lecteur PDF indisponible (connexion ?)")); };
+        document.head.appendChild(s);
+      });
+      return pdfjsPromise;
+    }
+
+    // Texte positionné de chaque page : [{ items: [{ x, y, w, str }] }]
+    async function readPdfPages(file) {
+      const pdfjs = await loadPdfJs();
+      const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+      const pages = [];
+      for (let i = 1; i <= doc.numPages; i++) {
+        const tc = await (await doc.getPage(i)).getTextContent();
+        pages.push({ items: tc.items.filter((it) => it.str && it.str.trim()).map((it) => ({ x: it.transform[4], y: it.transform[5], w: it.width, str: it.str.trim() })) });
+      }
+      return pages;
+    }
+
+    const AMOUNT_RE = /^-?\d{1,3}(?:[   ]\d{3})*,\d{2}$/;
+    const frNum = (s) => Number(s.replace(/[   ]/g, "").replace(",", "."));
+
+    // Relevé de compte LCL : colonnes DATE / LIBELLE / VALEUR / DEBIT / CREDIT.
+    // Le sens (débit ou crédit) se lit à la position du montant ; le total est contrôlé avec l'ancien et le nouveau solde.
+    function parseLclPages(pages) {
+      const ops = [];
+      let ancienSolde = null, nouveauSolde = null, fini = false, cur = null;
+      // Titulaires (« MR NOM PRENOM », « OU MME NOM PRENOM ») : servent à reconnaître les virements entre vos comptes
+      const holders = new Set();
+      const p0 = pages[0]?.items || [];
+      p0.forEach((it) => {
+        const m = it.str.match(/^(?:OU\s+|ET\s+)?(?:MR|MME|MLLE|M\.?)\s+(.+)$/i);
+        if (m && it.x < 250) m[1].split(/\s+/).forEach((w) => w.length > 2 && holders.add(normTxt(w)));
+      });
+      for (const page of pages) {
+        if (fini) break;
+        const hdr = page.items.find((it) => it.str === "DEBIT");
+        const hdrC = page.items.find((it) => it.str === "CREDIT");
+        const hdrV = page.items.find((it) => it.str === "VALEUR");
+        if (!hdr || !hdrC) continue;
+        const split = (hdr.x + hdr.w + hdrC.x + hdrC.w) / 2;
+        const minAmountX = hdrV ? hdrV.x + hdrV.w : hdr.x - 40;
+        const lines = new Map();
+        page.items.filter((it) => it.y < hdr.y - 2 && it.y > 40).forEach((it) => {
+          const key = [...lines.keys()].find((k) => Math.abs(k - it.y) < 2.5) ?? it.y;
+          if (!lines.has(key)) lines.set(key, []);
+          lines.get(key).push(it);
+        });
+        const sorted = [...lines.entries()].sort((a, b) => b[0] - a[0]).map(([, its]) => its.sort((a, b) => a.x - b.x));
+        for (const its of sorted) {
+          if (fini) break;
+          const text = its.map((i) => i.str).join(" ");
+          if (/^Page \d+/.test(text)) continue;
+          const amounts = its.filter((i) => i.x >= minAmountX && AMOUNT_RE.test(i.str));
+          const amountOf = () => {
+            if (!amounts.length) return null;
+            const a = amounts[amounts.length - 1];
+            return (a.x + a.w > split ? 1 : -1) * frNum(a.str);
+          };
+          if (/ANCIEN SOLDE/.test(text)) { ancienSolde = amountOf(); continue; }
+          if (/SOLDE EN EUROS|NOUVEAU SOLDE/.test(text)) { nouveauSolde = amountOf(); fini = true; break; }
+          if (/SOLDE INTERMEDIAIRE|TOTAUX/.test(text)) continue;
+          const dateIt = its[0];
+          const isOp = /^\d{2}\.\d{2}$/.test(dateIt.str) && dateIt.x < hdrV?.x - 200;
+          if (isOp) {
+            const valeur = its.find((i) => /^\d{2}\.\d{2}\.\d{2}$/.test(i.str));
+            const label = its.filter((i) => i !== dateIt && i !== valeur && !amounts.includes(i) && i.str !== ".").map((i) => i.str).join(" ");
+            const amt = amountOf();
+            if (amt === null) continue;
+            const [dd, mm] = dateIt.str.split(".").map(Number);
+            let year = valeur ? 2000 + Number(valeur.str.slice(6, 8)) : new Date().getFullYear();
+            const vm = valeur ? Number(valeur.str.slice(3, 5)) : mm;
+            if (mm === 12 && vm === 1) year -= 1;
+            if (mm === 1 && vm === 12) year += 1;
+            cur = { d: `${year}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`, label, amt, details: [] };
+            ops.push(cur);
+          } else if (cur && !amounts.length) {
+            cur.details.push(text);
+          }
+        }
+      }
+      return { ops, ancienSolde, nouveauSolde, holders: [...holders] };
+    }
+
+    // Libellé lisible : sans le préfixe CB ni la date d'achat ; le libellé SEPA détaillé est gardé à part
+    function lclTransactions(parsed, rules) {
+      const seen = new Map();
+      return parsed.ops.map((op) => {
+        let desc = op.label.replace(/\s+\d{2}\/\d{2}\/\d{2}$/, "").replace(/^CB\s+(?!RETRAIT)/, "").trim();
+        const libelle = op.details.find((l) => /^LIBELLE:/.test(l))?.slice(8).trim() || "";
+        const base = `lcl|${op.d}|${op.label}|${op.amt}`;
+        const n = (seen.get(base) || 0) + 1;
+        seen.set(base, n);
+        const type = /^CB RETRAIT/.test(op.label) ? "retrait" : /^CB /.test(op.label) ? "carte"
+          : /^(VIR|VIREMENT)/.test(op.label) ? "virement" : /^PRLV/.test(op.label) ? "prelevement"
+          : /COTISATION|COMMISSION|TENUE DE COMPTE|REMISE FIDELITE|A LA CARTE/.test(op.label) ? "frais" : "autre";
+        const tx = { id: hashStr(`${base}|${n}`), d: op.d, desc, amt: Math.round(op.amt * 100) / 100, type, src: "lcl", holders: parsed.holders };
+        if (libelle) tx.detail = libelle;
+        tx.cat = categorizeTx(tx, rules);
+        delete tx.holders;
+        return tx;
+      });
     }
 
     const KNOWN_SECURITIES = {
@@ -2817,13 +2956,12 @@ Méthode de calcul de l'application :
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState("");
       const [info, setInfo] = useState("");
-      const handleFile = async (file) => {
+      const handleFiles = async (files) => {
         setLoading(true); setError(""); setInfo("");
         try {
-          if (file.name.toLowerCase().endsWith(".pdf")) throw new Error("le PDF n'est pas lisible ici : dans Revolut, choisissez le format Excel ou CSV pour le relevé");
-          const { headers, rows } = await readFileAsRows(file);
-          if (!headers?.length) throw new Error("fichier vide ou illisible");
-          setInfo(onImport(file, headers, rows));
+          const { info, warnings } = await onImport(files);
+          setInfo(info);
+          if (warnings.length) setError(warnings.join(" · "));
         } catch (e) {
           setError(e.message || "lecture impossible");
         }
@@ -2833,15 +2971,15 @@ Méthode de calcul de l'application :
         <div className="rounded-xl p-4" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
           <label className="flex flex-wrap items-center gap-3 cursor-pointer">
             <span className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium" style={{ background: t.accent, color: t.onAccent }}>
-              <Upload size={15} /> Importer un relevé Revolut
+              <Upload size={15} /> Importer des relevés
             </span>
-            <span className="text-xs" style={{ color: t.textMuted }}>Excel ou CSV · les opérations déjà importées sont ignorées</span>
-            <input type="file" accept=".csv,.txt,.tsv,.xlsx,.xls,.pdf" className="hidden" disabled={loading}
-              onChange={(e) => { e.target.files[0] && handleFile(e.target.files[0]); e.target.value = ""; }} />
+            <span className="text-xs" style={{ color: t.textMuted }}>Revolut (Excel/CSV) ou LCL (PDF) · plusieurs fichiers possibles · les opérations déjà importées sont ignorées</span>
+            <input type="file" multiple accept=".csv,.txt,.tsv,.xlsx,.xls,.pdf" className="hidden" disabled={loading}
+              onChange={(e) => { const fs = [...e.target.files]; e.target.value = ""; fs.length && handleFiles(fs); }} />
           </label>
           <p className="text-xs mt-2" style={{ color: t.textMuted }}>
-            Dans l'app Revolut : Compte → ⋯ → Relevé → format Excel, période du mois écoulé. Les catégories sont devinées
-            depuis le libellé ; quand vous en corrigez une, l'app retient le marchand pour les relevés suivants.
+            Revolut : Compte → ⋯ → Relevé → format Excel. LCL : relevé de compte mensuel en PDF (espace client → Mes documents).
+            Les catégories sont devinées depuis le libellé ; quand vous en corrigez une, l'app retient le marchand pour les relevés suivants.
           </p>
           {loading && <p className="text-xs mt-1" style={{ color: t.textMuted }}>Lecture…</p>}
           {info && <p className="text-xs mt-1" style={{ color: t.gain }}>{info}</p>}
@@ -2932,7 +3070,7 @@ Méthode de calcul de l'application :
         return (
           <div className="space-y-4">
             <BudgetImport onImport={onImport} />
-            <p className="text-sm" style={{ color: t.textMuted }}>Aucune opération pour l'instant : importez votre premier relevé Revolut.</p>
+            <p className="text-sm" style={{ color: t.textMuted }}>Aucune opération pour l'instant : importez vos premiers relevés (Revolut ou LCL).</p>
           </div>
         );
       }
@@ -2963,10 +3101,10 @@ Méthode de calcul de l'application :
             <KPICard icon={Wallet} label="Reste (revenus − dépenses)" value={signed(current.solde)}
               sub={current.tauxEpargne !== null ? `${Math.round(current.tauxEpargne * 100)} % des revenus mis de côté` : "Pas de revenu ce mois-ci"} tone={current.solde >= 0 ? "up" : "down"} />
             <KPICard icon={PiggyBank} label="Versé vers les placements" value={fmtEUR(current.epargne)}
-              sub={isMobile ? "Depuis Revolut" : "Virements Revolut vers courtiers, Nalo, crypto…"} />
+              sub={isMobile ? "Net des retraits" : "Courtiers, assurance vie, crypto… nets des retraits"} />
           </div>
 
-          <Panel title="Revenus et dépenses par mois" subtitle="Opérations du compte Revolut, hors virements entre vos comptes et versements vers les placements">
+          <Panel title="Revenus et dépenses par mois" subtitle="Comptes Revolut et LCL, hors virements entre vos comptes et versements vers les placements">
             <BudgetMonthlyChart data={last12} />
           </Panel>
 
@@ -3079,7 +3217,7 @@ Méthode de calcul de l'application :
         return transactions.filter((tx) =>
           (period === "all" || tx.d.startsWith(period)) &&
           (filterSource === "all" || (tx.src || "revolut") === filterSource) &&
-          (!q || normTxt(tx.desc).includes(q) || normTxt(tx.cat).includes(q))
+          (!q || normTxt(`${tx.desc} ${tx.detail || ""} ${tx.cat}`).includes(q))
         );
       }, [transactions, period, filterSource, search]);
       const visible = useMemo(() => scoped
@@ -3285,8 +3423,9 @@ Méthode de calcul de l'application :
                         <div className="flex items-center gap-2 md:gap-3 flex-1 min-w-0">
                           <input type="checkbox" checked={selected.has(tx.id)} onChange={() => toggle(tx.id)} className="shrink-0" />
                           <span className="text-xs w-12 shrink-0" style={{ color: t.textMuted, ...NUM }}>{fmtDate(tx.d)}</span>
-                          <span className="text-sm truncate flex-1" style={{ color: t.text }} title={tx.desc}>
+                          <span className="text-sm truncate flex-1" style={{ color: t.text }} title={tx.detail ? `${tx.desc} — ${tx.detail}` : tx.desc}>
                             {tx.desc}
+                            {tx.detail && <span className="text-xs ml-1.5" style={{ color: t.textMuted }}>{tx.detail}</span>}
                             {sources.length > 1 && <span className="text-[10px] ml-1.5 px-1.5 py-0.5 rounded" style={{ background: t.panelAlt, color: t.textMuted }}>{BUDGET_SOURCES[tx.src || "revolut"] || tx.src}</span>}
                             {tx.manual && <span className="text-[10px] ml-1.5" style={{ color: t.textMuted }} title="Catégorie choisie à la main">✎</span>}
                           </span>
@@ -3440,11 +3579,37 @@ Méthode de calcul de l'application :
         return () => clearTimeout(delai);
       }, [budgetTx, budgetRules, loaded]);
 
-      const handleBudgetImport = (file, headers, rows) => {
-        const { transactions, skippedCurrency, skippedState } = parseRevolutRows(headers, rows, budgetRules);
-        if (!transactions.length) throw new Error("aucune opération en euros trouvée dans ce fichier");
+      const handleBudgetImport = async (files) => {
+        const transactions = [];
+        const warnings = [];
+        let skippedCurrency = 0, skippedState = 0, controles = 0;
+        for (const file of files) {
+          try {
+            if (file.name.toLowerCase().endsWith(".pdf")) {
+              const parsed = parseLclPages(await readPdfPages(file));
+              if (!parsed.ops.length) throw new Error("aucune opération trouvée (seuls les relevés de compte LCL en PDF sont reconnus)");
+              const total = parsed.ancienSolde + parsed.ops.reduce((s, o) => s + o.amt, 0);
+              if (parsed.ancienSolde !== null && parsed.nouveauSolde !== null && Math.abs(total - parsed.nouveauSolde) > 0.01) {
+                warnings.push(`${file.name} : le total lu (${fmtEURcents(total)}) ne retombe pas sur le solde du relevé (${fmtEURcents(parsed.nouveauSolde)}) — vérifiez ses opérations`);
+              } else if (parsed.nouveauSolde !== null) controles++;
+              transactions.push(...lclTransactions(parsed, budgetRules));
+            } else {
+              const { headers, rows } = await readFileAsRows(file);
+              if (!headers?.length) throw new Error("fichier vide ou illisible");
+              const r = parseRevolutRows(headers, rows, budgetRules);
+              if (!r.transactions.length) throw new Error("aucune opération en euros trouvée");
+              transactions.push(...r.transactions);
+              skippedCurrency += r.skippedCurrency; skippedState += r.skippedState;
+            }
+          } catch (e) {
+            warnings.push(`${file.name} : ${e.message || "lecture impossible"}`);
+          }
+        }
+        if (!transactions.length) throw new Error(warnings.join(" · ") || "aucune opération trouvée");
         const known = new Map(budgetTx.map((tx) => [tx.id, tx]));
-        const fresh = transactions.filter((tx) => !known.has(tx.id));
+        const freshMap = new Map();
+        transactions.forEach((tx) => { if (!known.has(tx.id) && !freshMap.has(tx.id)) freshMap.set(tx.id, tx); });
+        const fresh = [...freshMap.values()];
         // Une opération « en attente » déjà connue est mise à jour (montant final), sans perdre la catégorie choisie
         const settled = transactions.filter((tx) => known.get(tx.id)?.pending && !tx.pending);
         setBudgetTx((prev) => {
@@ -3452,11 +3617,13 @@ Méthode de calcul de l'application :
           return [...prev.map((tx) => (upd.has(tx.id) ? { ...upd.get(tx.id), cat: tx.cat, manual: tx.manual } : tx)), ...fresh];
         });
         const ds = transactions.map((tx) => tx.d).sort();
+        const dup = transactions.length - fresh.length;
         const parts = [`${fresh.length} nouvelle${fresh.length > 1 ? "s" : ""} opération${fresh.length > 1 ? "s" : ""} (du ${new Date(ds[0]).toLocaleDateString("fr-FR")} au ${new Date(ds[ds.length - 1]).toLocaleDateString("fr-FR")})`];
-        if (transactions.length - fresh.length) parts.push(`${transactions.length - fresh.length} déjà importée${transactions.length - fresh.length > 1 ? "s" : ""}`);
+        if (dup) parts.push(`${dup} déjà importée${dup > 1 ? "s" : ""}`);
+        if (controles) parts.push(`soldes vérifiés sur ${controles} relevé${controles > 1 ? "s" : ""} LCL ✓`);
         if (skippedCurrency) parts.push(`${skippedCurrency} hors euros ignorée${skippedCurrency > 1 ? "s" : ""}`);
         if (skippedState) parts.push(`${skippedState} annulée${skippedState > 1 ? "s" : ""} ignorée${skippedState > 1 ? "s" : ""}`);
-        return parts.join(" · ");
+        return { info: parts.join(" · "), warnings };
       };
       const handleBudgetCategory = (tx, cat) => {
         const key = budgetKey(tx.desc);
