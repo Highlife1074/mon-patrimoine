@@ -3570,6 +3570,10 @@ Méthode de calcul de l'application :
       const [filterKind, setFilterKind] = useState("all");
       const [filterSource, setFilterSource] = useState("all");
       const [search, setSearch] = useState("");
+      const [minAmt, setMinAmt] = useState("");
+      const [maxAmt, setMaxAmt] = useState("");
+      const [sens, setSens] = useState("all");
+      const [sortBy, setSortBy] = useState("date");
       const [limit, setLimit] = useState(150);
       const [selected, setSelected] = useState(() => new Set());
       const [bulkCat, setBulkCat] = useState("Famille & proches");
@@ -3582,15 +3586,23 @@ Méthode de calcul de l'application :
       // Filtres de période / compte / recherche : ils déterminent aussi la synthèse par catégorie
       const scoped = useMemo(() => {
         const q = normTxt(search);
+        // Montant : comparé en valeur absolue (« entre 100 et 500 € », dépense ou rentrée)
+        const lo = minAmt === "" ? null : Number(minAmt), hi = maxAmt === "" ? null : Number(maxAmt);
         return transactions.filter((tx) =>
           (period === "all" || tx.d.startsWith(period)) &&
           (filterSource === "all" || (tx.src || "revolut") === filterSource) &&
+          (sens === "all" || (sens === "out" ? tx.amt < 0 : tx.amt > 0)) &&
+          (lo === null || Math.abs(tx.amt) >= lo) && (hi === null || Math.abs(tx.amt) <= hi) &&
           (!q || normTxt(`${tx.desc} ${tx.detail || ""} ${tx.cat}`).includes(q))
         );
-      }, [transactions, period, filterSource, search]);
+      }, [transactions, period, filterSource, search, minAmt, maxAmt, sens]);
       const visible = useMemo(() => scoped
         .filter((tx) => (filterCat === "all" || tx.cat === filterCat) && (filterKind === "all" || budgetKind(tx.cat) === filterKind))
-        .sort((a, b) => b.d.localeCompare(a.d) || a.amt - b.amt), [scoped, filterCat, filterKind]);
+        .sort(sortBy === "date" ? (a, b) => b.d.localeCompare(a.d) || a.amt - b.amt
+          : sortBy === "desc" ? (a, b) => Math.abs(b.amt) - Math.abs(a.amt) || b.d.localeCompare(a.d)
+          : (a, b) => Math.abs(a.amt) - Math.abs(b.amt) || b.d.localeCompare(a.d)), [scoped, filterCat, filterKind, sortBy]);
+      const amountFilterOn = minAmt !== "" || maxAmt !== "" || sens !== "all";
+      const visibleTotals = useMemo(() => visible.reduce((acc, tx) => { if (tx.amt < 0) acc.out -= tx.amt; else acc.in += tx.amt; return acc; }, { out: 0, in: 0 }), [visible]);
 
       const months = useMemo(() => [...new Set(scoped.map((tx) => tx.d.slice(0, 7)))].sort(), [scoped]);
       const summary = useMemo(() => {
@@ -3631,7 +3643,8 @@ Méthode de calcul de l'application :
       // Liste regroupée par mois
       const rowsByMonth = [];
       shown.forEach((tx) => {
-        const p = tx.d.slice(0, 7);
+        // Tri par montant : une seule liste, sans regroupement par mois
+        const p = sortBy === "date" ? tx.d.slice(0, 7) : "tri";
         if (!rowsByMonth.length || rowsByMonth[rowsByMonth.length - 1].p !== p) rowsByMonth.push({ p, items: [] });
         rowsByMonth[rowsByMonth.length - 1].items.push(tx);
       });
@@ -3658,6 +3671,32 @@ Méthode de calcul de l'application :
             )}
             <input value={search} onChange={(e) => { setSearch(e.target.value); setLimit(150); }} placeholder="Rechercher un libellé…"
               className="rounded-lg px-3 py-1.5 text-sm flex-1 min-w-[160px]" style={select} />
+            <div className="w-full flex flex-wrap items-center gap-2 text-sm">
+              <select value={sens} onChange={(e) => { setSens(e.target.value); setLimit(150); }} className="rounded-lg px-2 py-1.5 text-sm" style={select}>
+                <option value="all">Entrées et sorties</option>
+                <option value="out">Sorties (dépenses)</option>
+                <option value="in">Entrées</option>
+              </select>
+              <span className="flex items-center gap-1.5" style={{ color: t.textMuted }}>
+                Montant
+                <input type="number" inputMode="decimal" min="0" value={minAmt} onChange={(e) => { setMinAmt(e.target.value); setLimit(150); }} placeholder="min"
+                  className="w-20 rounded-lg px-2 py-1.5 text-sm text-right" style={{ ...select, ...NUM }} />
+                à
+                <input type="number" inputMode="decimal" min="0" value={maxAmt} onChange={(e) => { setMaxAmt(e.target.value); setLimit(150); }} placeholder="max"
+                  className="w-20 rounded-lg px-2 py-1.5 text-sm text-right" style={{ ...select, ...NUM }} />
+                €
+              </span>
+              <select value={sortBy} onChange={(e) => { setSortBy(e.target.value); setLimit(150); }} className="rounded-lg px-2 py-1.5 text-sm" style={select}>
+                <option value="date">Tri : date</option>
+                <option value="desc">Tri : montant décroissant</option>
+                <option value="asc">Tri : montant croissant</option>
+              </select>
+              {(amountFilterOn || sortBy !== "date") && (
+                <button onClick={() => { setMinAmt(""); setMaxAmt(""); setSens("all"); setSortBy("date"); }} className="text-xs px-2 py-1 rounded-lg" style={{ color: t.textMuted, border: `1px solid ${t.border}` }}>
+                  Réinitialiser
+                </button>
+              )}
+            </div>
           </div>
 
           <Panel title="Totaux par catégorie"
@@ -3743,7 +3782,7 @@ Méthode de calcul de l'application :
             )}
           </Panel>
 
-          <Panel title={`Mouvements (${visible.length})`}
+          <Panel title={`Mouvements (${visible.length})${visibleTotals.out ? ` · sorties ${fmtEUR(visibleTotals.out)}` : ""}${visibleTotals.in ? ` · entrées ${fmtEUR(visibleTotals.in)}` : ""}`}
             subtitle="Changer la catégorie d'une ligne la mémorise pour ce marchand ou cette personne ; la sélection multiple ne change que les lignes cochées">
               <div className="flex flex-wrap gap-2 mb-3">
                 <select value={filterKind} onChange={(e) => { setFilterKind(e.target.value); setFilterCat("all"); }} className="rounded-lg px-2 py-1.5 text-xs" style={select}>
@@ -3781,7 +3820,7 @@ Méthode de calcul de l'application :
               return (
                 <div key={p} className="mb-3">
                   <div className="flex justify-between text-xs font-semibold py-1.5 capitalize" style={{ color: t.textMuted, borderBottom: `1px solid ${t.border}` }}>
-                    <span>{monthLong(p)}</span>
+                    <span className={p === "tri" ? "normal-case" : ""}>{p === "tri" ? `Triées par montant ${sortBy === "desc" ? "décroissant" : "croissant"}` : monthLong(p)}</span>
                     {dep !== 0 && <span className="normal-case" style={NUM}>dépenses affichées : {fmtEUR(dep)}</span>}
                   </div>
                   {items.map((tx) => {
@@ -3790,7 +3829,7 @@ Méthode de calcul de l'application :
                       <div key={tx.id} className="py-2 flex flex-col md:flex-row md:items-center gap-1 md:gap-3" style={{ borderBottom: `1px solid ${t.border}`, opacity: kind === "neutre" ? 0.65 : 1 }}>
                         <div className="flex items-center gap-2 md:gap-3 flex-1 min-w-0">
                           <input type="checkbox" checked={selected.has(tx.id)} onChange={() => toggle(tx.id)} className="shrink-0" />
-                          <span className="text-xs w-12 shrink-0" style={{ color: t.textMuted, ...NUM }}>{fmtDate(tx.d)}</span>
+                          <span className="text-xs w-12 shrink-0" style={{ color: t.textMuted, ...NUM }}>{fmtDate(tx.d)}{sortBy !== "date" && <span className="block text-[10px]">{tx.d.slice(0, 4)}</span>}</span>
                           <span className="text-sm truncate flex-1" style={{ color: t.text }} title={tx.detail ? `${tx.desc} — ${tx.detail}` : tx.desc}>
                             {tx.desc}
                             {tx.detail && <span className="text-xs ml-1.5" style={{ color: t.textMuted }}>{tx.detail}</span>}
