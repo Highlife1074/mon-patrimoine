@@ -2713,8 +2713,6 @@
     // ================== CHAT CLAUDE ==================
     // La clé API est rattachée au compte connecté : un document Firebase par utilisateur.
     const claudeKeyRef = (uid) => doc(db, "patrimoine", `claude_${uid}`);
-    const budgetMetaRef = doc(db, "patrimoine", "budget");
-    const budgetYearRef = (y) => doc(db, "patrimoine", `budget_${y}`);
 
     const CHAT_INSTRUCTIONS = `Tu es l'assistant de l'application « Mon patrimoine », un tableau de bord personnel de suivi de patrimoine.
 L'utilisateur te pose des questions sur ses chiffres : réponds en français, de façon concise, en t'appuyant uniquement sur les données fournies ci-dessous.
@@ -3471,7 +3469,6 @@ Méthode de calcul de l'application :
       // Budget : opérations Revolut importées (un document Firestore par année) et catégories apprises par marchand
       const [budgetTx, setBudgetTx] = useState([]);
       const [budgetRules, setBudgetRules] = useState({});
-      const budgetSavedRef = useRef({ meta: null, years: {} });
       const [monthlyModalOpen, setMonthlyModalOpen] = useState(false);
       const [monthlyModalKey, setMonthlyModalKey] = useState(0);
       const [tab, setTab] = useState("dashboard");
@@ -3484,6 +3481,7 @@ Méthode de calcul de l'application :
       // Persistance Firebase
       const [loaded, setLoaded] = useState(false);
       const [saveStatus, setSaveStatus] = useState("idle"); 
+      const [saveError, setSaveError] = useState("");
       const [lastSaved, setLastSaved] = useState(null);
       const docRef = doc(db, "patrimoine", "mon_portefeuille");
 
@@ -3510,18 +3508,10 @@ Méthode de calcul de l'application :
               if (saved.weekly) setWeeklyArchive(saved.weekly);
               if (saved.transfers) setTransfers(saved.transfers);
               if (saved.recurringTransfers) setRecurringTransfers(saved.recurringTransfers);
-            }
-            const metaSnap = await getDoc(budgetMetaRef);
-            if (!annule && metaSnap.exists()) {
-              const meta = metaSnap.data();
-              const years = meta.years || [];
-              const snaps = await Promise.all(years.map((y) => getDoc(budgetYearRef(y))));
-              const tx = snaps.flatMap((sn) => (sn.exists() ? sn.data().tx || [] : []));
-              budgetSavedRef.current = {
-                meta: JSON.stringify({ rules: meta.rules || {}, years }),
-                years: Object.fromEntries(years.map((y) => [y, JSON.stringify(tx.filter((x) => x.d.startsWith(y)))])),
-              };
-              if (!annule) { setBudgetRules(meta.rules || {}); setBudgetTx(tx); }
+              if (saved.budget) {
+                setBudgetTx(saved.budget.tx || []);
+                setBudgetRules(saved.budget.rules || {});
+              }
             }
           } catch (e) {
             console.error("Erreur de chargement Firebase:", e);
@@ -3536,53 +3526,32 @@ Méthode de calcul de l'application :
         setSaveStatus("saving");
         const delai = setTimeout(async () => {
           try {
-            await setDoc(docRef, {
+            const payload = {
               positions,
               monthly,
               weekly: weeklyArchive,
               transfers,
               recurringTransfers,
+              // Budget (opérations bancaires + catégories apprises) : dans le même document, seul autorisé en écriture
+              budget: { tx: budgetTx, rules: budgetRules },
               seedVersion: SEED_VERSION,
               derniereMiseAJour: new Date().toISOString()
-            });
+            };
+            // Firestore limite un document à 1 Mo
+            const taille = new Blob([JSON.stringify(payload)]).size;
+            if (taille > 1000000) throw new Error(`données trop volumineuses (${Math.round(taille / 1024)} Ko, maximum 1 000 Ko)`);
+            await setDoc(docRef, payload);
             setSaveStatus("saved"); 
+            setSaveError("");
             setLastSaved(new Date());
           } catch (e) {
             console.error("Erreur de sauvegarde Firebase:", e);
             setSaveStatus("erreur");
+            setSaveError(e?.code === "permission-denied" ? "accès refusé par Firebase" : e?.message || String(e));
           }
         }, 800); 
         return () => clearTimeout(delai);
-      }, [positions, monthly, weeklyArchive, transfers, recurringTransfers, loaded]);
-
-      // Sauvegarde du budget : on ne réécrit que les années modifiées
-      useEffect(() => {
-        if (!loaded) return;
-        const delai = setTimeout(async () => {
-          const saved = budgetSavedRef.current;
-          const byYear = {};
-          budgetTx.forEach((tx) => { (byYear[tx.d.slice(0, 4)] ||= []).push(tx); });
-          const years = Object.keys(byYear).sort();
-          const toWrite = [...new Set([...years, ...Object.keys(saved.years)])]
-            .map((y) => [y, JSON.stringify(byYear[y] || [])])
-            .filter(([y, json]) => saved.years[y] !== json);
-          const metaJson = JSON.stringify({ rules: budgetRules, years });
-          if (!toWrite.length && metaJson === saved.meta) return;
-          setSaveStatus("saving");
-          try {
-            await Promise.all(toWrite.map(([y, json]) => setDoc(budgetYearRef(y), { tx: JSON.parse(json) })));
-            if (metaJson !== saved.meta) await setDoc(budgetMetaRef, { rules: budgetRules, years, derniereMiseAJour: new Date().toISOString() });
-            toWrite.forEach(([y, json]) => { if (byYear[y]) saved.years[y] = json; else delete saved.years[y]; });
-            saved.meta = metaJson;
-            setSaveStatus("saved");
-            setLastSaved(new Date());
-          } catch (e) {
-            console.error("Erreur de sauvegarde du budget:", e);
-            setSaveStatus("erreur");
-          }
-        }, 800);
-        return () => clearTimeout(delai);
-      }, [budgetTx, budgetRules, loaded]);
+      }, [positions, monthly, weeklyArchive, transfers, recurringTransfers, budgetTx, budgetRules, loaded]);
 
       const handleBudgetImport = async (files) => {
         const transactions = [];
@@ -3870,7 +3839,7 @@ Méthode de calcul de l'application :
                         {new Date(lastMonthly.date).toLocaleDateString("fr-FR", isMobile ? { day: "numeric", month: "short", year: "numeric" } : { day: "numeric", month: "long", year: "numeric" })}
                         {saveStatus === "saving" && " · Enregistrement…"}
                         {saveStatus === "saved" && lastSaved && ` · ${isMobile ? "" : "Sauvegardé à "}${lastSaved.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`}
-                        {saveStatus === "erreur" && <span style={{ color: t.loss }}> · Échec de la sauvegarde</span>}
+                        {saveStatus === "erreur" && <span style={{ color: t.loss }} title={saveError}> · Échec de la sauvegarde{saveError && !isMobile ? ` : ${saveError}` : ""}</span>}
                       </p>
                     </div>
                   </div>
