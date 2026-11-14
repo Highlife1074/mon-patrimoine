@@ -341,6 +341,7 @@
       { id: "Impôts & taxes", kind: "depense" },
       { id: "Frais bancaires", kind: "depense" },
       { id: "Retraits espèces", kind: "depense" },
+      { id: "Famille & proches", kind: "depense" },
       { id: "Autres dépenses", kind: "depense" },
       { id: "Épargne / placements", kind: "epargne" },
       { id: "Virement interne", kind: "neutre" },
@@ -356,10 +357,10 @@
       ["Abonnements & télécom", /netflix|spotify|disney|deezer|canal ?\+|amazon ?prime|prime video|apple\.com|itunes|icloud|google|youtube|openai|chatgpt|anthropic|claude\.ai|\bfree\b|free mobile|orange|\bsfr\b|bouygues|sosh|red by|adobe|microsoft|dropbox|audible|molotov|dazn|bein/i],
       ["Courses", /carrefour|leclerc|auchan|lidl|aldi|intermarch|monoprix|franprix|casino|picard|super ?u\b|hyper ?u\b|u express|biocoop|naturalia|grand frais|vie claire|netto|\bcora\b|\bmatch\b|\bg20\b|\bspar\b|proxi|lafayette gourmet|la grande [ée]picerie|boucherie|primeur|fromager/i],
       ["Restaurants & sorties", /restaurant|\bresto|brasserie|bistro|caf[eé]\b|\bbar\b|mcdonald|mc ?do|burger|kfc|starbucks|uber ?eats|deliveroo|just ?eat|sushi|pizza|kebab|boulangerie|patisserie|p[aâ]tisserie|traiteur|cr[eê]perie|brewdog|five guys|o'?tacos|big mamma|pret a manger|columbus/i],
-      ["Transport", /sncf|ouigo|trainline|ratp|navigo|\buber\b(?! ?eats)|\bbolt\b|heetch|blablacar|esso|shell|\bbp\b|avia|total ?energies|total access|carburant|station|p[eé]age|vinci autoroute|sanef|aprr|\basf\b|parking|indigo|onepark|air ?france|easyjet|ryanair|transavia|vueling|lufthansa|\blime\b|velib|getaround|\btier\b|\bdott\b|marcel|g7 /i],
+      ["Transport", /sncf|ouigo|trainline|ratp|navigo|\buber\b(?! ?eats)|\bbolt\b|heetch|blablacar|esso|shell|\bbp\b|avia|total ?energies|total access|carburant|station|p[eé]age|vinci autoroute|sanef|aprr|\basf\b|parking|indigo|onepark|air ?france|easyjet|ryanair|transavia|vueling|lufthansa|aegean|sky ?express|airlines?|airways|\blime\b|velib|getaround|\btier\b|\bdott\b|marcel|g7 /i],
       ["Santé", /pharmacie|pharmacy|m[eé]decin|docteur|\bdr\b|doctolib|dentiste|kin[eé]|mutuelle|h[oô]pital|clinique|laboratoire|opticien|optique|cpam|ost[eé]opathe/i],
       ["Loisirs & voyages", /booking|airbnb|h[oô]tel|cin[eé]ma|\bugc\b|path[eé]|gaumont|ticketmaster|fnac spectacles|steam|playstation|nintendo|xbox|basic ?fit|fitness|salle de sport|club med|expedia|mus[eé]e|parc |golf|ski|abritel|lastminute|opodo|kayak/i],
-      ["Shopping", /amazon|fnac|darty|zara|h ?& ?m|uniqlo|decathlon|ikea|leroy merlin|castorama|boulanger|apple store|sephora|\baction\b|cdiscount|vinted|aliexpress|shein|zalando|temu|primark|redoute|galeries lafayette|printemps|nike|adidas|kiabi|celio|jules|etsy|ebay/i],
+      ["Shopping", /amazon|fnac|darty|zara|h ?& ?m|uniqlo|decathlon|ikea|leroy merlin|castorama|boulanger|apple store|sephora|\baction\b|cdiscount|vinted|aliexpress|shein|zalando|temu|primark|redoute|galeries lafayette|printemps|nike|adidas|kiabi|celio|jules|etsy|ebay|skroutz|public\.gr|plaisio|kotsovolos|jumbo/i],
       ["Retraits espèces", /retrait|cash withdrawal|\batm\b|distributeur/i],
       ["Frais bancaires", /frais|\bfees?\b|commission|plan (premium|metal|plus|ultra)|abonnement revolut/i],
       ["Salaire", /salaire|salary|payroll|\bpaie\b|wages|r[eé]mun[eé]ration/i],
@@ -379,17 +380,34 @@
       return s || "autre";
     }
 
-    // Clé d'apprentissage : libellé sans chiffres ni ponctuation ("Carrefour City 1234" → "carrefour city")
-    const budgetKey = (desc) => String(desc || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
+    // Virement entre particuliers : « Virement à : NOM », « Virement de : NOM », « Transfer to NOM »…
+    const PERSON_RE = /^(?:virement (?:à|a|de|vers|depuis)\s*:?|transfer (?:to|from)\s*:?|paiement envoy[ée] par|payment from|to|from)\s+(.+)$/i;
+    const personOf = (desc) => String(desc || "").trim().match(PERSON_RE)?.[1]?.trim() || null;
+    // Compte joint : deux titulaires (« A & B », « M X OU MME Y »)
+    const isJointAccount = (name) => /\s&\s|\bou\s+(mme|mr|m)\b|\bet\s+(mme|mr|m)\b/i.test(name || "");
+
+    const normTxt = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
       .replace(/[0-9*#/\\.,:;_'"()\-]+/g, " ").replace(/\s+/g, " ").trim();
+    // Clé d'apprentissage : libellé sans chiffres ni ponctuation ("Carrefour City 1234" → "carrefour city").
+    // Pour un virement entre particuliers, la clé est la personne : une seule règle couvre l'envoi et la réception.
+    const budgetKey = (desc) => {
+      const who = personOf(desc);
+      return who ? `personne ${normTxt(who)}` : normTxt(desc);
+    };
 
     function categorizeTx(tx, rules) {
       const learned = rules?.[budgetKey(tx.desc)];
       if (learned) return learned;
       if (tx.type === "change") return "Virement interne";
       if (/savings|[ée]pargne|pocket|coffre|vault/i.test(tx.product || "")) return "Virement interne";
-      const hit = BUDGET_KEYWORDS.find(([cat, re]) => re.test(tx.desc) && (cat !== "Salaire" || tx.amt > 0));
-      if (hit) return hit[0];
+      const kw = (cats) => BUDGET_KEYWORDS.find(([cat, re]) => cats.includes(cat) && re.test(tx.desc) && (cat !== "Salaire" || tx.amt > 0))?.[0];
+      const prioritaire = kw(["Épargne / placements", "Virement interne", "Salaire"]);
+      if (prioritaire) return prioritaire;
+      const who = personOf(tx.desc);
+      if (who) return isJointAccount(who) || tx.type === "recharge" ? "Virement interne" : "Famille & proches";
+      const hit = kw(BUDGET_KEYWORDS.map(([c]) => c));
+      if (hit) return hit;
+      if (tx.type === "remboursement") return "Autres dépenses";
       if (tx.type === "recharge") return "Virement interne";
       if (tx.type === "retrait") return "Retraits espèces";
       if (tx.type === "frais") return "Frais bancaires";
