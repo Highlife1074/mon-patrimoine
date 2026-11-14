@@ -428,6 +428,8 @@
       // « Virement interne » se juge sur le libellé seul : une référence « Envoyé depuis Revolut » ne suffit pas
       const kw = (cats) => BUDGET_KEYWORDS.find(([cat, re]) => cats.includes(cat) && re.test(cat === "Virement interne" ? tx.desc : text) && (budgetKind(cat) !== "revenu" || tx.amt > 0))?.[0];
       const prioritaire = kw(["Épargne / placements", "Virement interne", "Salaire", "Impôts & taxes"]);
+      // Argent reçu du fisc (« Assessment and collection », DGFIP…) : un revenu, pas une dépense négative
+      if (prioritaire === "Impôts & taxes" && tx.amt > 0) return "Autres revenus";
       if (prioritaire) return prioritaire;
       if (isOwnTransfer(tx)) return "Virement interne";
       const who = personOf(tx.desc);
@@ -537,13 +539,23 @@
         if (kind === "revenu") {
           m.revenus += tx.amt;
           if (tx.cat === "Salaire") m.salaire += tx.amt; else m.autresRevenus += tx.amt;
-        } else if (kind === "depense") m.depenses -= tx.amt;
-        else if (kind === "epargne") m.epargne -= tx.amt;
-        else m.interne += tx.amt;
+        } else if (kind === "epargne") m.epargne -= tx.amt;
+        else if (kind === "neutre") m.interne += tx.amt;
       });
       return Array.from(byMonth.values())
         .sort((a, b) => a.periode.localeCompare(b.periode))
-        .map((m) => ({ ...m, solde: m.revenus - m.depenses, tauxEpargne: m.revenus > 0 ? (m.revenus - m.depenses) / m.revenus : null }));
+        .map((m) => {
+          // Dépenses par catégorie, remboursements déduits. Si les remboursements d'une catégorie dépassent
+          // ses dépenses du mois, l'excédent compte comme un revenu (« Autres revenus ») : jamais de dépenses négatives.
+          let depenses = 0, excedent = 0;
+          BUDGET_CATEGORIES.filter((c) => c.kind === "depense").forEach((c) => {
+            const net = m.byCat[c.id] || 0;
+            if (net < 0) depenses -= net; else excedent += net;
+          });
+          const autresRevenus = m.autresRevenus + excedent;
+          const revenus = m.revenus + excedent;
+          return { ...m, depenses, autresRevenus, revenus, remboursementsExcedent: excedent, solde: revenus - depenses, tauxEpargne: revenus > 0 ? (revenus - depenses) / revenus : null };
+        });
     }
 
     // ================== RELEVÉS LCL (PDF) ==================
