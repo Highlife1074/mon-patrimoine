@@ -352,19 +352,19 @@
     const budgetKind = (cat) => BUDGET_KIND[cat] || "depense";
 
     const BUDGET_KEYWORDS = [
-      ["Épargne / placements", /\bwdr\b|trade ?republic|interactive ?b|ibkr|de ?giro|generali vie|assurance vie|nalo|binance|boursorama|bourse ?direct|premi[eè]re brique|homunity|scpi|linxea|yomoni|finary|amundi|natixis interepargne|epargne salariale|bitpanda|coinbase|kraken/i],
+      ["Épargne / placements", /\bwdr\b|\bpee\b|\bperc?o\b|pereco|trade ?republic|interactive ?b|ibkr|de ?giro|generali vie|assurance vie|nalo|binance|boursorama|bourse ?direct|premi[eè]re brique|homunity|scpi|linxea|yomoni|finary|amundi|natixis interepargne|epargne salariale|bitpanda|coinbase|kraken/i],
       ["Virement interne", /\b(vir|virement|transfer|to|from|vers|de)\b.*\b(lcl|cr[eé]dit lyonnais|revolut)\b|pocket|coffre|vault|savings|[ée]pargne revolut|exchanged? to|change en|^to (eur|usd|gbp|chf)\b|^vers (eur|usd)\b/i],
       ["Autres revenus", /\bcaf\b|allocations? familiales|dividende|p[oô]le emploi|france travail|\bcpam\b|ameli/i],
       ["Impôts & taxes", /dgfip|finances publiques?|imp[oô]ts?|tr[eé]sor public|amende|antai|urssaf|taxe/i],
       ["Logement & énergie", /loyer|\bedf\b|engie|veolia|suez|eau de|syndic|foncia|nexity|assurance habitation|ekwateur|mint energie|octopus|gaz de/i],
-      ["Abonnements & télécom", /netflix|spotify|disney|deezer|canal ?\+|amazon ?prime|prime video|apple\.com|itunes|icloud|google|youtube|openai|chatgpt|anthropic|claude\.ai|\bfree\b|free mobile|orange|\bsfr\b|bouygues ?tel|sosh|red by|adobe|microsoft|dropbox|audible|molotov|dazn|bein/i],
+      ["Abonnements & télécom", /netflix|spotify|disney|deezer|canal ?\+|amazon ?prime|prime video|apple\.com|itunes|icloud|google|youtube|openai|chatgpt|anthropic|claude\.ai|\bfree\b|free mobile|orange|\bsfr\b|bouygues ?tel|sosh|cosmote|vodafone|red by|adobe|microsoft|dropbox|audible|molotov|dazn|bein/i],
       ["Courses", /carrefour|leclerc|auchan|lidl|aldi|intermarch|monoprix|franprix|casino|picard|super ?u\b|hyper ?u\b|u express|biocoop|naturalia|grand frais|vie claire|netto|\bcora\b|\bmatch\b|\bg20\b|\bspar\b|proxi|lafayette gourmet|la grande [ée]picerie|boucherie|primeur|fromager/i],
       ["Restaurants & sorties", /restaurant|\bresto|brasserie|bistro|caf[eé]\b|\bbar\b|mcdonald|mc ?do|burger|kfc|starbucks|uber ?eats|deliveroo|just ?eat|sushi|pizza|kebab|boulangerie|patisserie|p[aâ]tisserie|traiteur|cr[eê]perie|brewdog|five guys|o'?tacos|big mamma|pret a manger|columbus|wolt|efood|7[ -]?11|7[ -]?eleven/i],
-      ["Transport", /sncf|ouigo|trainline|ratp|navigo|\buber\b(?! ?eats)|\bbolt\b|heetch|blablacar|esso|shell|\bbp\b|avia|total ?energies|total access|carburant|station|p[eé]age|vinci autoroute|sanef|aprr|\basf\b|parking|indigo|onepark|air ?france|easyjet|ryanair|transavia|vueling|lufthansa|aegean|fuels?\b|car rent|rent a car|enterprise car|hertz|europcar|\bsixt\b|\bavis\b|sky ?express|airlines?|airways|\blime\b|velib|getaround|\btier\b|\bdott\b|marcel|g7 /i],
+      ["Transport", /sncf|ouigo|trainline|ratp|navigo|\buber\b(?! ?eats)|\bbolt\b|heetch|blablacar|esso|shell|\bbp\b|avia|total ?energies|total access|carburant|station|p[eé]age|vinci autoroute|sanef|aprr|\basf\b|parking|indigo|onepark|air ?france|easyjet|ryanair|transavia|vueling|lufthansa|aegean|fuels?\b|belbim|taksi|taxi|\bmetro\b|car rent|rent a car|enterprise car|hertz|europcar|\bsixt\b|\bavis\b|sky ?express|airlines?|airways|\blime\b|velib|getaround|\btier\b|\bdott\b|marcel|g7 /i],
       ["Santé", /pharmacie|pharmacy|m[eé]decin|docteur|\bdr\b|doctolib|dentiste|kin[eé]|mutuelle|h[oô]pital|clinique|laboratoire|opticien|optique|ost[eé]opathe|willis towers/i],
       ["Assurances", /assurance|\bspb\b|securilion|generali|\baxa\b|maif|macif|matmut|allianz|groupama|\bmma\b|april/i],
       ["Éducation", /[ée]cole|school|scolarit|\bedu|universit|cantine|cr[eè]che|lyc[ée]e|coll[eè]ge|soutien scolaire/i],
-      ["Loisirs & voyages", /booking|airbnb|h[oô]tel|cin[eé]ma|\bugc\b|path[eé]|gaumont|ticketmaster|fnac spectacles|steam|playstation|nintendo|xbox|basic ?fit|fitness|salle de sport|club med|expedia|mus[eé]e|parc |golf|ski|abritel|lastminute|opodo|kayak/i],
+      ["Loisirs & voyages", /booking|airbnb|h[oô]tel|cin[eé]ma|\bugc\b|path[eé]|gaumont|ticketmaster|fnac spectacles|steam|playstation|nintendo|xbox|basic ?fit|fitness|salle de sport|club med|expedia|mus[eé]e|parc |golf|ski|abritel|lastminute|opodo|kayak|trekking|camping|\bcamp\b/i],
       ["Shopping", /amazon|fnac|darty|zara|h ?& ?m|uniqlo|decathlon|ikea|leroy merlin|castorama|boulanger|apple store|sephora|\baction\b|cdiscount|vinted|aliexpress|shein|zalando|temu|primark|redoute|galeries lafayette|printemps|nike|adidas|kiabi|celio|jules|etsy|ebay|skroutz|public\.gr|plaisio|kotsovolos|jumbo|le ?bon ?coin/i],
       ["Retraits espèces", /retrait|cash withdrawal|\batm\b|distributeur/i],
       ["Frais bancaires", /frais|\bfees?\b|commission|cotisation mensuelle carte|tenue de compte|remise fidelite|a la carte votre remise|plan (premium|metal|plus|ultra)|abonnement revolut/i],
@@ -627,7 +627,10 @@
           }
         }
       }
-      return { ops, ancienSolde, nouveauSolde, holders: [...holders] };
+      // Numéro de compte (« Compte : 77164 S ») : distingue les différents comptes LCL
+      const allText = pages.flatMap((pg) => pg.items.map((i) => i.str)).join(" ");
+      const account = allText.match(/Compte\s*:\s*(\d{4,})/)?.[1] || null;
+      return { ops, ancienSolde, nouveauSolde, holders: [...holders], account };
     }
 
     // Libellé lisible : sans le préfixe CB ni la date d'achat ; le libellé SEPA détaillé est gardé à part
@@ -636,13 +639,14 @@
       return parsed.ops.map((op) => {
         let desc = op.label.replace(/\s+\d{2}\/\d{2}\/\d{2}$/, "").replace(/^CB\s+(?!RETRAIT)/, "").trim();
         const libelle = op.details.find((l) => /^LIBELLE:/.test(l))?.slice(8).trim() || "";
-        const base = `lcl|${op.d}|${op.label}|${op.amt}`;
+        const src = parsed.account ? `lcl:${parsed.account}` : "lcl";
+        const base = `${src}|${op.d}|${op.label}|${op.amt}`;
         const n = (seen.get(base) || 0) + 1;
         seen.set(base, n);
         const type = /^CB RETRAIT/.test(op.label) ? "retrait" : /^CB /.test(op.label) ? "carte"
           : /^(VIR|VIREMENT)/.test(op.label) ? "virement" : /^PRLV/.test(op.label) ? "prelevement"
           : /COTISATION|COMMISSION|TENUE DE COMPTE|REMISE FIDELITE|A LA CARTE/.test(op.label) ? "frais" : "autre";
-        const tx = { id: hashStr(`${base}|${n}`), d: op.d, desc, amt: Math.round(op.amt * 100) / 100, type, src: "lcl", holders: parsed.holders };
+        const tx = { id: hashStr(`${base}|${n}`), d: op.d, desc, amt: Math.round(op.amt * 100) / 100, type, src, holders: parsed.holders };
         if (libelle) tx.detail = libelle;
         tx.cat = categorizeTx(tx, rules);
         delete tx.holders;
@@ -3191,6 +3195,7 @@ Méthode de calcul de l'application :
 
     // ================== ONGLET OPÉRATIONS (tous les mouvements) ==================
     const BUDGET_SOURCES = { revolut: "Revolut", lcl: "LCL" };
+    const sourceLabel = (src) => BUDGET_SOURCES[src || "revolut"] || (String(src).startsWith("lcl:") ? `LCL n°${src.slice(4)}` : src);
     const KIND_LABEL = { revenu: "Revenus", depense: "Dépenses", epargne: "Versements vers les placements", neutre: "Virements entre mes comptes" };
     const shortMonth = (p) => periodeDate(p).toLocaleDateString("fr-FR", { month: "short", year: "2-digit" });
 
@@ -3285,7 +3290,7 @@ Méthode de calcul de l'application :
             {sources.length > 1 && (
               <select value={filterSource} onChange={(e) => setFilterSource(e.target.value)} className="rounded-lg px-2 py-1.5 text-sm" style={select}>
                 <option value="all">Tous les comptes</option>
-                {sources.map((s) => <option key={s} value={s}>{BUDGET_SOURCES[s] || s}</option>)}
+                {sources.map((s) => <option key={s} value={s}>{sourceLabel(s)}</option>)}
               </select>
             )}
             <input value={search} onChange={(e) => { setSearch(e.target.value); setLimit(150); }} placeholder="Rechercher un libellé…"
@@ -3426,7 +3431,7 @@ Méthode de calcul de l'application :
                           <span className="text-sm truncate flex-1" style={{ color: t.text }} title={tx.detail ? `${tx.desc} — ${tx.detail}` : tx.desc}>
                             {tx.desc}
                             {tx.detail && <span className="text-xs ml-1.5" style={{ color: t.textMuted }}>{tx.detail}</span>}
-                            {sources.length > 1 && <span className="text-[10px] ml-1.5 px-1.5 py-0.5 rounded" style={{ background: t.panelAlt, color: t.textMuted }}>{BUDGET_SOURCES[tx.src || "revolut"] || tx.src}</span>}
+                            {sources.length > 1 && <span className="text-[10px] ml-1.5 px-1.5 py-0.5 rounded" style={{ background: t.panelAlt, color: t.textMuted }}>{sourceLabel(tx.src)}</span>}
                             {tx.manual && <span className="text-[10px] ml-1.5" style={{ color: t.textMuted }} title="Catégorie choisie à la main">✎</span>}
                           </span>
                           <span className="text-sm shrink-0 font-medium" style={{ color: tx.amt > 0 ? t.gain : t.text, ...NUM }}>
