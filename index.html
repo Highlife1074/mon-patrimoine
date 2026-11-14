@@ -45,7 +45,7 @@
       Wallet, TrendingUp, PiggyBank, Percent, Plus, Moon, Sun,
       ChevronDown, ChevronRight, ChevronLeft, X, ArrowUpRight, ArrowDownRight,
       Link2, Check, Clock, ArrowLeftRight, RefreshCw, Download, Upload, LogOut,
-      LayoutDashboard, Briefcase, History, MoreHorizontal, MessageCircle, Send, KeyRound
+      LayoutDashboard, Briefcase, History, MoreHorizontal, MessageCircle, Send, KeyRound, Receipt, List
     } from "lucide-react";
     
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
@@ -323,6 +323,335 @@
       const headers = (grid[0] || []).map((h) => (h === null || h === undefined ? "" : String(h)));
       const rows = grid.slice(1).map((r) => headers.map((_, i) => (r[i] === null || r[i] === undefined ? "" : r[i])));
       return { headers, rows };
+    }
+
+    // ================== BUDGET (relevés Revolut et LCL) ==================
+    // Nature de chaque catégorie : revenu, dépense, épargne (vers les placements) ou neutre (entre mes comptes)
+    const BUDGET_CATEGORIES = [
+      { id: "Salaire", kind: "revenu" },
+      { id: "Autres revenus", kind: "revenu" },
+      { id: "Logement & énergie", kind: "depense" },
+      { id: "Courses", kind: "depense" },
+      { id: "Restaurants & sorties", kind: "depense" },
+      { id: "Transport", kind: "depense" },
+      { id: "Shopping", kind: "depense" },
+      { id: "Abonnements & télécom", kind: "depense" },
+      { id: "Santé", kind: "depense" },
+      { id: "Assurances", kind: "depense" },
+      { id: "Éducation", kind: "depense" },
+      { id: "Loisirs & voyages", kind: "depense" },
+      { id: "Impôts & taxes", kind: "depense" },
+      { id: "Frais bancaires", kind: "depense" },
+      { id: "Retraits espèces", kind: "depense" },
+      { id: "Famille & proches", kind: "depense" },
+      { id: "Autres dépenses", kind: "depense" },
+      { id: "Épargne / placements", kind: "epargne" },
+      { id: "Virement interne", kind: "neutre" },
+    ];
+    const BUDGET_KIND = Object.fromEntries(BUDGET_CATEGORIES.map((c) => [c.id, c.kind]));
+    const budgetKind = (cat) => BUDGET_KIND[cat] || "depense";
+
+    const BUDGET_KEYWORDS = [
+      ["Épargne / placements", /\bwdr\b|\bpee\b|\bperc?o\b|pereco|trade ?republic|interactive ?b|ibkr|de ?giro|generali vie|assurance vie|nalo|binance|boursorama|bourse ?direct|premi[eè]re brique|homunity|scpi|linxea|yomoni|finary|amundi|natixis interepargne|epargne salariale|bitpanda|coinbase|kraken/i],
+      ["Virement interne", /\b(vir|virement|transfer|to|from|vers|de)\b.*\b(lcl|cr[eé]dit lyonnais|revolut)\b|pocket|coffre|vault|savings|[ée]pargne revolut|exchanged? to|change en|^to (eur|usd|gbp|chf)\b|^vers (eur|usd)\b/i],
+      ["Autres revenus", /\bcaf\b|allocations? familiales|dividende|p[oô]le emploi|france travail|\bcpam\b|ameli/i],
+      ["Impôts & taxes", /dgfip|finances publiques?|imp[oô]ts?|tr[eé]sor public|amende|antai|urssaf|taxe/i],
+      ["Logement & énergie", /loyer|\bedf\b|engie|veolia|suez|eau de|syndic|foncia|nexity|assurance habitation|ekwateur|mint energie|octopus|gaz de/i],
+      ["Abonnements & télécom", /netflix|spotify|disney|deezer|canal ?\+|amazon ?prime|prime video|apple\.com|itunes|icloud|google|youtube|openai|chatgpt|anthropic|claude\.ai|\bfree\b|free mobile|orange|\bsfr\b|bouygues ?tel|sosh|cosmote|vodafone|red by|adobe|microsoft|dropbox|audible|molotov|dazn|bein/i],
+      ["Courses", /carrefour|leclerc|auchan|lidl|aldi|intermarch|monoprix|franprix|casino|picard|super ?u\b|hyper ?u\b|u express|biocoop|naturalia|grand frais|vie claire|netto|\bcora\b|\bmatch\b|\bg20\b|\bspar\b|proxi|lafayette gourmet|la grande [ée]picerie|boucherie|primeur|fromager/i],
+      ["Restaurants & sorties", /restaurant|\bresto|brasserie|bistro|caf[eé]\b|\bbar\b|mcdonald|mc ?do|burger|kfc|starbucks|uber ?eats|deliveroo|just ?eat|sushi|pizza|kebab|boulangerie|patisserie|p[aâ]tisserie|traiteur|cr[eê]perie|brewdog|five guys|o'?tacos|big mamma|pret a manger|columbus|wolt|efood|7[ -]?11|7[ -]?eleven/i],
+      ["Transport", /sncf|ouigo|trainline|ratp|navigo|\buber\b(?! ?eats)|\bbolt\b|heetch|blablacar|esso|shell|\bbp\b|avia|total ?energies|total access|carburant|station|p[eé]age|vinci autoroute|sanef|aprr|\basf\b|parking|indigo|onepark|air ?france|easyjet|ryanair|transavia|vueling|lufthansa|aegean|fuels?\b|belbim|taksi|taxi|\bmetro\b|car rent|rent a car|enterprise car|hertz|europcar|\bsixt\b|\bavis\b|sky ?express|airlines?|airways|\blime\b|velib|getaround|\btier\b|\bdott\b|marcel|g7 /i],
+      ["Santé", /pharmacie|pharmacy|m[eé]decin|docteur|\bdr\b|doctolib|dentiste|kin[eé]|mutuelle|h[oô]pital|clinique|laboratoire|opticien|optique|ost[eé]opathe|willis towers/i],
+      ["Assurances", /assurance|\bspb\b|securilion|generali|\baxa\b|maif|macif|matmut|allianz|groupama|\bmma\b|april/i],
+      ["Éducation", /[ée]cole|school|scolarit|\bedu|universit|cantine|cr[eè]che|lyc[ée]e|coll[eè]ge|soutien scolaire/i],
+      ["Loisirs & voyages", /booking|airbnb|h[oô]tel|cin[eé]ma|\bugc\b|path[eé]|gaumont|ticketmaster|fnac spectacles|steam|playstation|nintendo|xbox|basic ?fit|fitness|salle de sport|club med|expedia|mus[eé]e|parc |golf|ski|abritel|lastminute|opodo|kayak|trekking|camping|\bcamp\b/i],
+      ["Shopping", /amazon|fnac|darty|zara|h ?& ?m|uniqlo|decathlon|ikea|leroy merlin|castorama|boulanger|apple store|sephora|\baction\b|cdiscount|vinted|aliexpress|shein|zalando|temu|primark|redoute|galeries lafayette|printemps|nike|adidas|kiabi|celio|jules|etsy|ebay|skroutz|public\.gr|plaisio|kotsovolos|jumbo|le ?bon ?coin/i],
+      ["Retraits espèces", /retrait|cash withdrawal|\batm\b|distributeur/i],
+      ["Frais bancaires", /frais|\bfees?\b|commission|cotisation mensuelle carte|tenue de compte|remise fidelite|a la carte votre remise|plan (premium|metal|plus|ultra)|abonnement revolut/i],
+      ["Salaire", /salaire|salary|payroll|\bpaie\b|wages|r[eé]mun[eé]ration|bonus|\bprime\b|13[eè]?m?e? mois/i],
+    ];
+
+    // Type d'opération Revolut (export anglais ou français) ramené à un code commun
+    function revolutType(raw) {
+      const s = String(raw || "").toLowerCase();
+      if (/exchange|change/.test(s)) return "change";
+      if (/top ?up|topup|recharge|ajout/.test(s)) return "recharge";
+      if (/refund|rembours/.test(s)) return "remboursement";
+      if (/atm|retrait/.test(s)) return "retrait";
+      if (/fee|frais/.test(s)) return "frais";
+      if (/card|carte/.test(s)) return "carte";
+      if (/interest|int[eé]r[eê]t|cashback|reward|r[eé]compense/.test(s)) return "interet";
+      if (/transfer|virement/.test(s)) return "virement";
+      return s || "autre";
+    }
+
+    // Virement entre particuliers : « Virement à : NOM », « Virement de : NOM », « Transfer to NOM »…
+    const PERSON_RE = /^(?:virement (?:à|a|de|vers|depuis)\s*:?|transfer (?:to|from)\s*:?|paiement envoy[ée] par|payment from|to|from)\s+(.+)$/i;
+    const personOf = (desc) => String(desc || "").trim().match(PERSON_RE)?.[1]?.trim() || null;
+    // Compte joint : deux titulaires (« A & B », « M X OU MME Y »)
+    const isJointAccount = (name) => /\s&\s|\bou\s+(mme|mr|m)\b|\bet\s+(mme|mr|m)\b/i.test(name || "");
+
+    const normTxt = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
+      .replace(/[0-9*#/\\.,:;_'"()\-]+/g, " ").replace(/\s+/g, " ").trim();
+    // Clé d'apprentissage : libellé sans chiffres ni ponctuation ("Carrefour City 1234" → "carrefour city").
+    // Pour un virement entre particuliers, la clé est la personne : une seule règle couvre l'envoi et la réception.
+    // Virement LCL : « VIR INST NOM », « VIREMENT NOM », « VIR.PERMANENT NOM »… → le tiers
+    const lclCounterparty = (desc) => String(desc || "").match(/^(?:VIR(?:EMENT)?|VIR\.PERMANENT)(?:\s+(?:INST|SEPA))?\s+(.+)$/i)?.[1]?.trim() || null;
+    const budgetKey = (desc) => {
+      const who = personOf(desc);
+      if (who) return `personne ${normTxt(who)}`;
+      const tiers = lclCounterparty(desc);
+      return tiers ? `tiers ${normTxt(tiers)}` : normTxt(desc);
+    };
+    // Virement vers / depuis un compte à vos noms (titulaires lus sur le relevé)
+    function isOwnTransfer(tx) {
+      const tiers = lclCounterparty(tx.desc);
+      if (!tiers || !tx.holders?.length) return false;
+      const words = normTxt(tiers).split(" ");
+      return words.filter((w) => tx.holders.includes(w)).length >= 2 || tx.holders.includes(words[0]);
+    }
+
+    function categorizeTx(tx, rules) {
+      // Signal fort dans le libellé détaillé du virement (fiche de paie, note de frais) : prime sur la règle apprise
+      if (tx.amt > 0 && tx.detail) {
+        if (/expense note|exp notes?|note de frais/i.test(tx.detail)) return "Autres revenus";
+        if (/salary|salaire|\bpaie\b|payroll|bonus/i.test(tx.detail)) return "Salaire";
+      }
+      const learned = rules?.[budgetKey(tx.desc)];
+      if (learned) return learned;
+      if (tx.type === "retrait") return "Retraits espèces";
+      if (tx.type === "change") return "Virement interne";
+      if (/savings|[ée]pargne|pocket|coffre|vault/i.test(tx.product || "")) return "Virement interne";
+      const text = `${tx.desc} ${tx.detail || ""}`;
+      const kw = (cats) => BUDGET_KEYWORDS.find(([cat, re]) => cats.includes(cat) && re.test(text) && (budgetKind(cat) !== "revenu" || tx.amt > 0))?.[0];
+      const prioritaire = kw(["Épargne / placements", "Virement interne", "Salaire"]);
+      if (prioritaire) return prioritaire;
+      if (isOwnTransfer(tx)) return "Virement interne";
+      const who = personOf(tx.desc);
+      if (who) return isJointAccount(who) || tx.type === "recharge" ? "Virement interne" : "Famille & proches";
+      const hit = kw(BUDGET_KEYWORDS.map(([c]) => c));
+      if (hit) return hit;
+      if (tx.type === "remboursement") return "Autres dépenses";
+      if (tx.type === "recharge") return "Virement interne";
+      if (tx.type === "retrait") return "Retraits espèces";
+      if (tx.type === "frais") return "Frais bancaires";
+      if (tx.type === "interet") return "Autres revenus";
+      return tx.amt >= 0 ? "Autres revenus" : "Autres dépenses";
+    }
+
+    // Date Revolut : "2026-10-03 14:22:10", "03/10/2026 14:22" ou numéro de série Excel
+    function parseAnyDate(raw) {
+      if (raw === null || raw === undefined || raw === "") return null;
+      if (typeof raw === "number" && isFinite(raw)) {
+        const d = new Date(Math.round((raw - 25569) * 86400 * 1000));
+        return d.toISOString().slice(0, 19).replace("T", " ");
+      }
+      if (raw instanceof Date) return raw.toISOString().slice(0, 19).replace("T", " ");
+      const s = String(raw).trim();
+      let m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+      if (m) return `${m[1]}-${m[2]}-${m[3]} ${m[4] || "00"}:${m[5] || "00"}:${m[6] || "00"}`;
+      m = s.match(/^(\d{1,2})[/.](\d{1,2})[/.](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+      if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")} ${(m[4] || "0").padStart(2, "0")}:${m[5] || "00"}:${m[6] || "00"}`;
+      const d = new Date(s);
+      return isNaN(d) ? null : d.toISOString().slice(0, 19).replace("T", " ");
+    }
+
+    function hashStr(s) {
+      let h = 5381;
+      for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+      return h.toString(36);
+    }
+
+    // Lit un export Revolut (CSV ou Excel, en anglais ou en français) et renvoie les opérations en euros
+    function parseRevolutRows(headers, rows, rules) {
+      const find = (re) => headers.findIndex((h) => re.test(String(h).trim()));
+      const col = {
+        type: find(/^type$/i),
+        product: find(/^(product|produit)$/i),
+        started: find(/started|d[ée]but|^date$/i),
+        completed: find(/completed|date de fin|termin/i),
+        desc: find(/^(description|libell[ée])$/i),
+        amount: find(/^(amount|montant)$/i),
+        fee: find(/^(fee|frais)$/i),
+        currency: find(/^(currency|devise)$/i),
+        state: find(/^(state|[ée]tat|statut)$/i),
+      };
+      if (col.amount < 0 || col.desc < 0 || (col.started < 0 && col.completed < 0)) {
+        throw new Error("ce fichier ne ressemble pas à un relevé Revolut (colonnes Date / Description / Montant introuvables)");
+      }
+      const seen = new Map();
+      const out = [];
+      let skippedCurrency = 0, skippedState = 0;
+      rows.forEach((r) => {
+        const state = col.state >= 0 ? String(r[col.state] || "") : "";
+        if (/revert|declin|fail|annul|refus|rejet/i.test(state)) { skippedState++; return; }
+        const currency = col.currency >= 0 ? String(r[col.currency] || "EUR").trim().toUpperCase() : "EUR";
+        if (currency && currency !== "EUR") { skippedCurrency++; return; }
+        const when = parseAnyDate(col.started >= 0 ? r[col.started] : null) || parseAnyDate(r[col.completed]);
+        const amount = num(r[col.amount]);
+        if (!when || !isFinite(amount)) return;
+        const fee = col.fee >= 0 ? num(r[col.fee]) : 0;
+        const amt = Math.round((amount - (isFinite(fee) ? Math.abs(fee) : 0)) * 100) / 100;
+        if (amt === 0) return;
+        const desc = String(r[col.desc] || "").trim();
+        const base = `${when}|${desc}|${amount}`;
+        const n = (seen.get(base) || 0) + 1;
+        seen.set(base, n);
+        const tx = {
+          id: hashStr(`${base}|${n}`),
+          d: when.slice(0, 10),
+          desc,
+          amt,
+          type: revolutType(col.type >= 0 ? r[col.type] : ""),
+          product: col.product >= 0 ? String(r[col.product] || "") : "",
+          src: "revolut",
+        };
+        if (/pending|attente|en cours/i.test(state)) tx.pending = true;
+        tx.cat = categorizeTx(tx, rules);
+        out.push(tx);
+      });
+      return { transactions: out, skippedCurrency, skippedState };
+    }
+
+    // Synthèse par mois calendaire : revenus, dépenses nettes des remboursements, épargne, détail par catégorie
+    function buildBudgetMonths(transactions) {
+      const byMonth = new Map();
+      transactions.forEach((tx) => {
+        const p = tx.d.slice(0, 7);
+        if (!byMonth.has(p)) byMonth.set(p, { periode: p, salaire: 0, autresRevenus: 0, revenus: 0, depenses: 0, epargne: 0, interne: 0, byCat: {}, count: 0 });
+        const m = byMonth.get(p);
+        const kind = budgetKind(tx.cat);
+        m.count++;
+        m.byCat[tx.cat] = (m.byCat[tx.cat] || 0) + tx.amt;
+        if (kind === "revenu") {
+          m.revenus += tx.amt;
+          if (tx.cat === "Salaire") m.salaire += tx.amt; else m.autresRevenus += tx.amt;
+        } else if (kind === "depense") m.depenses -= tx.amt;
+        else if (kind === "epargne") m.epargne -= tx.amt;
+        else m.interne += tx.amt;
+      });
+      return Array.from(byMonth.values())
+        .sort((a, b) => a.periode.localeCompare(b.periode))
+        .map((m) => ({ ...m, solde: m.revenus - m.depenses, tauxEpargne: m.revenus > 0 ? (m.revenus - m.depenses) / m.revenus : null }));
+    }
+
+    // ================== RELEVÉS LCL (PDF) ==================
+    const PDFJS_VERSION = "3.11.174";
+    let pdfjsPromise = null;
+    function loadPdfJs() {
+      if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+      pdfjsPromise ||= new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.min.js`;
+        s.onload = () => {
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.worker.min.js`;
+          resolve(window.pdfjsLib);
+        };
+        s.onerror = () => { pdfjsPromise = null; reject(new Error("lecteur PDF indisponible (connexion ?)")); };
+        document.head.appendChild(s);
+      });
+      return pdfjsPromise;
+    }
+
+    // Texte positionné de chaque page : [{ items: [{ x, y, w, str }] }]
+    async function readPdfPages(file) {
+      const pdfjs = await loadPdfJs();
+      const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+      const pages = [];
+      for (let i = 1; i <= doc.numPages; i++) {
+        const tc = await (await doc.getPage(i)).getTextContent();
+        pages.push({ items: tc.items.filter((it) => it.str && it.str.trim()).map((it) => ({ x: it.transform[4], y: it.transform[5], w: it.width, str: it.str.trim() })) });
+      }
+      return pages;
+    }
+
+    const AMOUNT_RE = /^-?\d{1,3}(?:[   ]\d{3})*,\d{2}$/;
+    const frNum = (s) => Number(s.replace(/[   ]/g, "").replace(",", "."));
+
+    // Relevé de compte LCL : colonnes DATE / LIBELLE / VALEUR / DEBIT / CREDIT.
+    // Le sens (débit ou crédit) se lit à la position du montant ; le total est contrôlé avec l'ancien et le nouveau solde.
+    function parseLclPages(pages) {
+      const ops = [];
+      let ancienSolde = null, nouveauSolde = null, fini = false, cur = null;
+      // Titulaires (« MR NOM PRENOM », « OU MME NOM PRENOM ») : servent à reconnaître les virements entre vos comptes
+      const holders = new Set();
+      const p0 = pages[0]?.items || [];
+      p0.forEach((it) => {
+        const m = it.str.match(/^(?:OU\s+|ET\s+)?(?:MR|MME|MLLE|M\.?)\s+(.+)$/i);
+        if (m && it.x < 250) m[1].split(/\s+/).forEach((w) => w.length > 2 && holders.add(normTxt(w)));
+      });
+      for (const page of pages) {
+        if (fini) break;
+        const hdr = page.items.find((it) => it.str === "DEBIT");
+        const hdrC = page.items.find((it) => it.str === "CREDIT");
+        const hdrV = page.items.find((it) => it.str === "VALEUR");
+        if (!hdr || !hdrC) continue;
+        const split = (hdr.x + hdr.w + hdrC.x + hdrC.w) / 2;
+        const minAmountX = hdrV ? hdrV.x + hdrV.w : hdr.x - 40;
+        const lines = new Map();
+        page.items.filter((it) => it.y < hdr.y - 2 && it.y > 40).forEach((it) => {
+          const key = [...lines.keys()].find((k) => Math.abs(k - it.y) < 2.5) ?? it.y;
+          if (!lines.has(key)) lines.set(key, []);
+          lines.get(key).push(it);
+        });
+        const sorted = [...lines.entries()].sort((a, b) => b[0] - a[0]).map(([, its]) => its.sort((a, b) => a.x - b.x));
+        for (const its of sorted) {
+          if (fini) break;
+          const text = its.map((i) => i.str).join(" ");
+          if (/^Page \d+/.test(text)) continue;
+          const amounts = its.filter((i) => i.x >= minAmountX && AMOUNT_RE.test(i.str));
+          const amountOf = () => {
+            if (!amounts.length) return null;
+            const a = amounts[amounts.length - 1];
+            return (a.x + a.w > split ? 1 : -1) * frNum(a.str);
+          };
+          if (/ANCIEN SOLDE/.test(text)) { ancienSolde = amountOf(); continue; }
+          if (/SOLDE EN EUROS|NOUVEAU SOLDE/.test(text)) { nouveauSolde = amountOf(); fini = true; break; }
+          if (/SOLDE INTERMEDIAIRE|TOTAUX/.test(text)) continue;
+          const dateIt = its[0];
+          const isOp = /^\d{2}\.\d{2}$/.test(dateIt.str) && dateIt.x < hdrV?.x - 200;
+          if (isOp) {
+            const valeur = its.find((i) => /^\d{2}\.\d{2}\.\d{2}$/.test(i.str));
+            const label = its.filter((i) => i !== dateIt && i !== valeur && !amounts.includes(i) && i.str !== ".").map((i) => i.str).join(" ");
+            const amt = amountOf();
+            if (amt === null) continue;
+            const [dd, mm] = dateIt.str.split(".").map(Number);
+            let year = valeur ? 2000 + Number(valeur.str.slice(6, 8)) : new Date().getFullYear();
+            const vm = valeur ? Number(valeur.str.slice(3, 5)) : mm;
+            if (mm === 12 && vm === 1) year -= 1;
+            if (mm === 1 && vm === 12) year += 1;
+            cur = { d: `${year}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`, label, amt, details: [] };
+            ops.push(cur);
+          } else if (cur && !amounts.length) {
+            cur.details.push(text);
+          }
+        }
+      }
+      // Numéro de compte (« Compte : 77164 S ») : distingue les différents comptes LCL
+      const allText = pages.flatMap((pg) => pg.items.map((i) => i.str)).join(" ");
+      const account = allText.match(/Compte\s*:\s*(\d{4,})/)?.[1] || null;
+      return { ops, ancienSolde, nouveauSolde, holders: [...holders], account };
+    }
+
+    // Libellé lisible : sans le préfixe CB ni la date d'achat ; le libellé SEPA détaillé est gardé à part
+    function lclTransactions(parsed, rules) {
+      const seen = new Map();
+      return parsed.ops.map((op) => {
+        let desc = op.label.replace(/\s+\d{2}\/\d{2}\/\d{2}$/, "").replace(/^CB\s+(?!RETRAIT)/, "").trim();
+        const libelle = op.details.find((l) => /^LIBELLE:/.test(l))?.slice(8).trim() || "";
+        const src = parsed.account ? `lcl:${parsed.account}` : "lcl";
+        const base = `${src}|${op.d}|${op.label}|${op.amt}`;
+        const n = (seen.get(base) || 0) + 1;
+        seen.set(base, n);
+        const type = /^CB RETRAIT/.test(op.label) ? "retrait" : /^CB /.test(op.label) ? "carte"
+          : /^(VIR|VIREMENT)/.test(op.label) ? "virement" : /^PRLV/.test(op.label) ? "prelevement"
+          : /COTISATION|COMMISSION|TENUE DE COMPTE|REMISE FIDELITE|A LA CARTE/.test(op.label) ? "frais" : "autre";
+        const tx = { id: hashStr(`${base}|${n}`), d: op.d, desc, amt: Math.round(op.amt * 100) / 100, type, src, holders: parsed.holders };
+        if (libelle) tx.detail = libelle;
+        tx.cat = categorizeTx(tx, rules);
+        delete tx.holders;
+        return tx;
+      });
     }
 
     const KNOWN_SECURITIES = {
@@ -2384,6 +2713,8 @@
     // ================== CHAT CLAUDE ==================
     // La clé API est rattachée au compte connecté : un document Firebase par utilisateur.
     const claudeKeyRef = (uid) => doc(db, "patrimoine", `claude_${uid}`);
+    const budgetMetaRef = doc(db, "patrimoine", "budget");
+    const budgetYearRef = (y) => doc(db, "patrimoine", `budget_${y}`);
 
     const CHAT_INSTRUCTIONS = `Tu es l'assistant de l'application « Mon patrimoine », un tableau de bord personnel de suivi de patrimoine.
 L'utilisateur te pose des questions sur ses chiffres : réponds en français, de façon concise, en t'appuyant uniquement sur les données fournies ci-dessous.
@@ -2402,7 +2733,7 @@ Méthode de calcul de l'application :
 - Bilan annuel : rendement de l'année = gain de l'année / patrimoine en début d'année.
 - Les virements validés non rattachés à un relevé sont ajoutés aux flux.`;
 
-    function buildChatContext({ monthlyEff, monthlyMetrics, yearlyMetrics, positions, transfers, kpis }) {
+    function buildChatContext({ monthlyEff, monthlyMetrics, yearlyMetrics, positions, transfers, budgetMonths = [], kpis }) {
       const r = (v) => (typeof v === "number" ? Math.round(v) : v);
       const lines = [];
       lines.push(`Date du jour : ${new Date().toISOString().slice(0, 10)}`);
@@ -2423,6 +2754,14 @@ Méthode de calcul de l'application :
       if (transfers.length) {
         lines.push("\n## Virements (date départ;de;vers;montant;statut;libellé)");
         transfers.forEach((tr) => lines.push([tr.departureDate?.slice(0, 10), tr.sourceAccountId, tr.destinationAccountId, tr.amount, tr.status, tr.label || ""].join(";")));
+      }
+      if (budgetMonths.length) {
+        lines.push("\n## Budget mensuel issu des relevés Revolut (mois calendaire ; montants en € ; dépenses nettes des remboursements, hors virements internes et versements vers les placements)");
+        lines.push("periode;salaires;autresRevenus;depenses;reste;versementsPlacements;detailDepensesParCategorie");
+        budgetMonths.forEach((m) => {
+          const det = Object.entries(m.byCat).filter(([c]) => budgetKind(c) === "depense").map(([c, v]) => `${c}=${r(-v)}`).join(", ");
+          lines.push([m.periode, m.salaire, m.autresRevenus, m.depenses, m.solde, m.epargne].map(r).join(";") + `;${det}`);
+        });
       }
       return lines.join("\n");
     }
@@ -2613,6 +2952,512 @@ Méthode de calcul de l'application :
       );
     }
 
+    // ================== ONGLET BUDGET ==================
+    const monthLong = (p) => periodeDate(p).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+
+    function BudgetImport({ onImport }) {
+      const t = useTheme();
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState("");
+      const [info, setInfo] = useState("");
+      const handleFiles = async (files) => {
+        setLoading(true); setError(""); setInfo("");
+        try {
+          const { info, warnings } = await onImport(files);
+          setInfo(info);
+          if (warnings.length) setError(warnings.join(" · "));
+        } catch (e) {
+          setError(e.message || "lecture impossible");
+        }
+        setLoading(false);
+      };
+      return (
+        <div className="rounded-xl p-4" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
+          <label className="flex flex-wrap items-center gap-3 cursor-pointer">
+            <span className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium" style={{ background: t.accent, color: t.onAccent }}>
+              <Upload size={15} /> Importer des relevés
+            </span>
+            <span className="text-xs" style={{ color: t.textMuted }}>Revolut (Excel/CSV) ou LCL (PDF) · plusieurs fichiers possibles · les opérations déjà importées sont ignorées</span>
+            <input type="file" multiple accept=".csv,.txt,.tsv,.xlsx,.xls,.pdf" className="hidden" disabled={loading}
+              onChange={(e) => { const fs = [...e.target.files]; e.target.value = ""; fs.length && handleFiles(fs); }} />
+          </label>
+          <p className="text-xs mt-2" style={{ color: t.textMuted }}>
+            Revolut : Compte → ⋯ → Relevé → format Excel. LCL : relevé de compte mensuel en PDF (espace client → Mes documents).
+            Les catégories sont devinées depuis le libellé ; quand vous en corrigez une, l'app retient le marchand pour les relevés suivants.
+          </p>
+          {loading && <p className="text-xs mt-1" style={{ color: t.textMuted }}>Lecture…</p>}
+          {info && <p className="text-xs mt-1" style={{ color: t.gain }}>{info}</p>}
+          {error && <p className="text-xs mt-1" style={{ color: t.loss }}>{error}</p>}
+        </div>
+      );
+    }
+
+    function BudgetMonthlyChart({ data }) {
+      const t = useTheme();
+      const isMobile = useIsMobile();
+      return (
+        <div>
+          <ChartLegend items={[{ label: "Revenus", color: t.s3 }, { label: "Dépenses", color: t.s2 }]} />
+          <ResponsiveContainer width="100%" height={isMobile ? 220 : 280}>
+            <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barCategoryGap="25%" barGap={2}>
+              <CartesianGrid stroke={t.border} vertical={false} />
+              <XAxis dataKey="periode" tickFormatter={monthLabel} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} minTickGap={12} />
+              <YAxis tickFormatter={(v) => `${(v / 1000).toFixed(v && Math.abs(v) < 10000 ? 1 : 0)}k`} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} width={44} />
+              <Tooltip
+                cursor={{ fill: t.panelAlt }}
+                content={({ active, payload }) => {
+                  if (!active || !payload?.length) return null;
+                  const p = payload[0].payload;
+                  const row = (label, v, color, bold) => (
+                    <div className="flex justify-between items-center gap-4">
+                      <span className="flex items-center gap-1.5" style={{ color: t.textMuted }}>
+                        {color && <span className="w-2 h-2 rounded-sm" style={{ background: color }} />}{label}
+                      </span>
+                      <span style={{ color: t.text, fontWeight: bold ? 600 : 400, ...NUM }}>{fmtEUR(v)}</span>
+                    </div>
+                  );
+                  return (
+                    <div className="space-y-1 text-xs" style={{ ...tooltipStyle(t), minWidth: 210 }}>
+                      <div className="font-semibold" style={{ color: t.text }}>{monthLong(p.periode)}</div>
+                      {row("Revenus", p.revenus, t.s3)}
+                      <div className="pl-3.5 text-[11px]" style={{ color: t.textMuted }}>dont salaires {fmtEUR(p.salaire)}</div>
+                      {row("Dépenses", p.depenses, t.s2)}
+                      <div className="pt-1 mt-1" style={{ borderTop: `1px solid ${t.border}` }}>{row("Reste (revenus − dépenses)", p.solde, null, true)}</div>
+                    </div>
+                  );
+                }}
+              />
+              <ReferenceLine y={0} stroke={t.textMuted} strokeOpacity={0.6} />
+              <Bar dataKey="revenus" fill={t.s3} radius={[4, 4, 0, 0]} maxBarSize={20} />
+              <Bar dataKey="depenses" fill={t.s2} radius={[4, 4, 0, 0]} maxBarSize={20} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      );
+    }
+
+    function BudgetTab({ transactions, rules, onImport, onSetCategory, onDeleteRule, onDeleteMonth }) {
+      const t = useTheme();
+      const isMobile = useIsMobile();
+      const months = useMemo(() => buildBudgetMonths(transactions), [transactions]);
+      const [periode, setPeriode] = useState(null);
+      const [filterCat, setFilterCat] = useState("all");
+      const current = months.find((m) => m.periode === periode) || months[months.length - 1];
+      const idx = current ? months.indexOf(current) : -1;
+      const last12 = months.slice(-12);
+      const prev12 = current ? months.filter((m) => m.periode < current.periode).slice(-12) : [];
+
+      const catRows = useMemo(() => {
+        if (!current) return [];
+        return BUDGET_CATEGORIES.filter((c) => c.kind === "depense")
+          .map((c) => {
+            const value = -(current.byCat[c.id] || 0);
+            const avg = prev12.length ? prev12.reduce((s, m) => s - (m.byCat[c.id] || 0), 0) / prev12.length : null;
+            return { cat: c.id, value, avg };
+          })
+          .filter((r) => Math.abs(r.value) >= 0.5 || (r.avg && r.avg >= 1))
+          .sort((a, b) => b.value - a.value);
+      }, [current, prev12]);
+      const maxCat = Math.max(1, ...catRows.map((r) => Math.max(r.value, r.avg || 0)));
+
+      const monthTx = useMemo(() => {
+        if (!current) return [];
+        return transactions
+          .filter((tx) => tx.d.startsWith(current.periode) && (filterCat === "all" || tx.cat === filterCat))
+          .sort((a, b) => b.d.localeCompare(a.d) || a.amt - b.amt);
+      }, [transactions, current, filterCat]);
+
+      const ruleEntries = Object.entries(rules).sort((a, b) => a[0].localeCompare(b[0]));
+      const select = { background: t.panel, color: t.text, border: `1px solid ${t.border}` };
+
+      if (!current) {
+        return (
+          <div className="space-y-4">
+            <BudgetImport onImport={onImport} />
+            <p className="text-sm" style={{ color: t.textMuted }}>Aucune opération pour l'instant : importez vos premiers relevés (Revolut ou LCL).</p>
+          </div>
+        );
+      }
+
+      const avg = (key) => (last12.length ? last12.reduce((s, m) => s + m[key], 0) / last12.length : 0);
+
+      return (
+        <div className="space-y-3 md:space-y-5">
+          <BudgetImport onImport={onImport} />
+
+          <div className="flex items-center justify-between gap-2">
+            <button onClick={() => idx > 0 && setPeriode(months[idx - 1].periode)} disabled={idx <= 0} className="p-2 rounded-lg" style={{ color: idx > 0 ? t.text : t.border }}>
+              <ChevronLeft size={18} />
+            </button>
+            <select value={current.periode} onChange={(e) => setPeriode(e.target.value)} className="rounded-lg px-3 py-2 text-sm font-semibold capitalize" style={select}>
+              {months.map((m) => <option key={m.periode} value={m.periode}>{monthLong(m.periode)}</option>)}
+            </select>
+            <button onClick={() => idx < months.length - 1 && setPeriode(months[idx + 1].periode)} disabled={idx >= months.length - 1} className="p-2 rounded-lg" style={{ color: idx < months.length - 1 ? t.text : t.border }}>
+              <ChevronRight size={18} />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+            <KPICard icon={Briefcase} label="Salaires" value={fmtEUR(current.salaire)}
+              sub={current.autresRevenus ? `+ ${fmtEUR(current.autresRevenus)} d'autres revenus` : `Moyenne 12 mois : ${fmtEUR(avg("salaire"))}`} />
+            <KPICard icon={ArrowDownRight} label="Dépenses" value={fmtEUR(current.depenses)}
+              sub={`Moyenne 12 mois : ${fmtEUR(avg("depenses"))}`} />
+            <KPICard icon={Wallet} label="Reste (revenus − dépenses)" value={signed(current.solde)}
+              sub={current.tauxEpargne !== null ? `${Math.round(current.tauxEpargne * 100)} % des revenus mis de côté` : "Pas de revenu ce mois-ci"} tone={current.solde >= 0 ? "up" : "down"} />
+            <KPICard icon={PiggyBank} label="Versé vers les placements" value={fmtEUR(current.epargne)}
+              sub={isMobile ? "Net des retraits" : "Courtiers, assurance vie, crypto… nets des retraits"} />
+          </div>
+
+          <Panel title="Revenus et dépenses par mois" subtitle="Comptes Revolut et LCL, hors virements entre vos comptes et versements vers les placements">
+            <BudgetMonthlyChart data={last12} />
+          </Panel>
+
+          <Panel title={`Dépenses par catégorie — ${monthLong(current.periode)}`}
+            subtitle={prev12.length ? `Barre pleine : ce mois-ci · trait : moyenne des ${prev12.length} mois précédents` : "Remboursements déduits de la catégorie concernée"}>
+            <div className="space-y-2.5">
+              {catRows.map((r) => {
+                const over = r.avg !== null && r.avg > 0 && r.value > r.avg * 1.25 && r.value - r.avg > 30;
+                return (
+                  <button key={r.cat} type="button" onClick={() => setFilterCat(filterCat === r.cat ? "all" : r.cat)} className="w-full text-left">
+                    <div className="flex items-center justify-between text-xs mb-1 gap-2">
+                      <span style={{ color: t.text, fontWeight: filterCat === r.cat ? 700 : 500 }}>{r.cat}</span>
+                      <span style={{ color: t.text, ...NUM }}>
+                        {fmtEUR(r.value)}
+                        {r.avg !== null && <span style={{ color: over ? t.warning : t.textMuted }}> · moy. {fmtEUR(r.avg)}{over ? " ▲" : ""}</span>}
+                      </span>
+                    </div>
+                    <div className="relative h-2 rounded-full" style={{ background: t.panelAlt }}>
+                      <div className="h-2 rounded-full" style={{ width: `${Math.max(0, (r.value / maxCat) * 100)}%`, background: t.s2 }} />
+                      {r.avg !== null && r.avg > 0 && (
+                        <div className="absolute -top-0.5 w-0.5 h-3 rounded" style={{ left: `${(r.avg / maxCat) * 100}%`, background: t.text }} />
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </Panel>
+
+          <Panel title={`Opérations — ${monthLong(current.periode)} (${monthTx.length})`}
+            subtitle="Changer une catégorie l'applique aux autres opérations du même marchand et aux prochains relevés"
+            action={
+              <select value={filterCat} onChange={(e) => setFilterCat(e.target.value)} className="rounded-lg px-2 py-1.5 text-xs shrink-0" style={select}>
+                <option value="all">Toutes</option>
+                {BUDGET_CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.id}</option>)}
+              </select>
+            }>
+            <div className="divide-y" style={{ borderColor: t.border }}>
+              {monthTx.map((tx) => {
+                const kind = budgetKind(tx.cat);
+                const muted = kind === "neutre";
+                return (
+                  <div key={tx.id} className="py-2 flex flex-col md:flex-row md:items-center gap-1 md:gap-3" style={{ borderColor: t.border, opacity: muted ? 0.6 : 1 }}>
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                      <span className="text-xs w-12 shrink-0" style={{ color: t.textMuted, ...NUM }}>{fmtDate(tx.d)}</span>
+                      <span className="text-sm truncate flex-1" style={{ color: t.text }} title={tx.desc}>
+                        {tx.desc}{tx.pending && <span className="text-[10px] ml-1" style={{ color: t.warning }}>en attente</span>}
+                      </span>
+                      <span className="text-sm shrink-0 font-medium" style={{ color: tx.amt > 0 ? t.gain : t.text, ...NUM }}>
+                        {tx.amt > 0 ? "+" : ""}{fmtEURcents(tx.amt)}
+                      </span>
+                    </div>
+                    <select value={tx.cat} onChange={(e) => onSetCategory(tx, e.target.value)} className="rounded-lg px-2 py-1 text-xs md:w-48" style={select}>
+                      {BUDGET_CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.id}</option>)}
+                    </select>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-4 flex items-center justify-end gap-2 text-xs" style={{ color: t.textMuted }}>
+              Supprimer les opérations de ce mois
+              <DeleteButton title={`Supprimer les opérations de ${monthLong(current.periode)}`} onConfirm={() => { onDeleteMonth(current.periode); setPeriode(null); }} />
+            </div>
+          </Panel>
+
+          {ruleEntries.length > 0 && (
+            <Panel title={`Marchands mémorisés (${ruleEntries.length})`} subtitle="Catégories que vous avez corrigées : elles s'appliquent automatiquement aux prochains relevés" collapsible defaultCollapsed>
+              <div className="space-y-1">
+                {ruleEntries.map(([key, cat]) => (
+                  <div key={key} className="flex items-center justify-between gap-3 text-xs py-1">
+                    <span className="truncate" style={{ color: t.text }}>{key}</span>
+                    <span className="flex items-center gap-2 shrink-0">
+                      <span style={{ color: t.textMuted }}>{cat}</span>
+                      <button onClick={() => onDeleteRule(key)} title="Oublier" className="p-1 rounded" style={{ color: t.textMuted }}><X size={13} /></button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </Panel>
+          )}
+        </div>
+      );
+    }
+
+    // ================== ONGLET OPÉRATIONS (tous les mouvements) ==================
+    const BUDGET_SOURCES = { revolut: "Revolut", lcl: "LCL" };
+    const sourceLabel = (src) => BUDGET_SOURCES[src || "revolut"] || (String(src).startsWith("lcl:") ? `LCL n°${src.slice(4)}` : src);
+    const KIND_LABEL = { revenu: "Revenus", depense: "Dépenses", epargne: "Versements vers les placements", neutre: "Virements entre mes comptes" };
+    const shortMonth = (p) => periodeDate(p).toLocaleDateString("fr-FR", { month: "short", year: "2-digit" });
+
+    function OperationsTab({ transactions, onImport, onSetCategory, onBulkCategory }) {
+      const t = useTheme();
+      const isMobile = useIsMobile();
+      const [period, setPeriod] = useState("all");
+      const [filterCat, setFilterCat] = useState("all");
+      const [filterKind, setFilterKind] = useState("all");
+      const [filterSource, setFilterSource] = useState("all");
+      const [search, setSearch] = useState("");
+      const [limit, setLimit] = useState(150);
+      const [selected, setSelected] = useState(() => new Set());
+      const [bulkCat, setBulkCat] = useState("Famille & proches");
+      const [view, setView] = useState("totaux");
+
+      const allMonths = useMemo(() => [...new Set(transactions.map((tx) => tx.d.slice(0, 7)))].sort().reverse(), [transactions]);
+      const years = useMemo(() => [...new Set(allMonths.map((m) => m.slice(0, 4)))], [allMonths]);
+      const sources = useMemo(() => [...new Set(transactions.map((tx) => tx.src || "revolut"))], [transactions]);
+
+      // Filtres de période / compte / recherche : ils déterminent aussi la synthèse par catégorie
+      const scoped = useMemo(() => {
+        const q = normTxt(search);
+        return transactions.filter((tx) =>
+          (period === "all" || tx.d.startsWith(period)) &&
+          (filterSource === "all" || (tx.src || "revolut") === filterSource) &&
+          (!q || normTxt(`${tx.desc} ${tx.detail || ""} ${tx.cat}`).includes(q))
+        );
+      }, [transactions, period, filterSource, search]);
+      const visible = useMemo(() => scoped
+        .filter((tx) => (filterCat === "all" || tx.cat === filterCat) && (filterKind === "all" || budgetKind(tx.cat) === filterKind))
+        .sort((a, b) => b.d.localeCompare(a.d) || a.amt - b.amt), [scoped, filterCat, filterKind]);
+
+      const months = useMemo(() => [...new Set(scoped.map((tx) => tx.d.slice(0, 7)))].sort(), [scoped]);
+      const summary = useMemo(() => {
+        const byCat = {};
+        scoped.forEach((tx) => {
+          const r = (byCat[tx.cat] ||= { cat: tx.cat, kind: budgetKind(tx.cat), total: 0, count: 0, byMonth: {} });
+          r.total += tx.amt; r.count++;
+          const p = tx.d.slice(0, 7);
+          r.byMonth[p] = (r.byMonth[p] || 0) + tx.amt;
+        });
+        return byCat;
+      }, [scoped]);
+      const groups = ["depense", "revenu", "epargne", "neutre"].map((kind) => {
+        const rows = BUDGET_CATEGORIES.filter((c) => c.kind === kind && summary[c.id]).map((c) => summary[c.id]);
+        // Dépenses et versements en positif, revenus en positif : on affiche ce qui « sort » ou « entre »
+        const sign = kind === "revenu" || kind === "neutre" ? 1 : -1;
+        const list = rows.map((r) => ({ ...r, value: sign * r.total })).sort((a, b) => b.value - a.value);
+        return { kind, rows: list, total: list.reduce((s, r) => s + r.value, 0), sign };
+      }).filter((g) => g.rows.length);
+      const totalDepenses = groups.find((g) => g.kind === "depense")?.total || 0;
+      const maxDep = Math.max(1, ...(groups.find((g) => g.kind === "depense")?.rows || []).map((r) => r.value));
+
+      const toggle = (id) => setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+      const shown = visible.slice(0, limit);
+      const allShownSelected = shown.length > 0 && shown.every((tx) => selected.has(tx.id));
+      const select = { background: t.panel, color: t.text, border: `1px solid ${t.border}` };
+      const chip = (active) => ({ background: active ? t.panel : "transparent", color: active ? t.text : t.textMuted, fontWeight: active ? 600 : 400 });
+
+      if (!transactions.length) {
+        return (
+          <div className="space-y-4">
+            <BudgetImport onImport={onImport} />
+            <p className="text-sm" style={{ color: t.textMuted }}>Aucune opération pour l'instant : importez un relevé.</p>
+          </div>
+        );
+      }
+
+      // Liste regroupée par mois
+      const rowsByMonth = [];
+      shown.forEach((tx) => {
+        const p = tx.d.slice(0, 7);
+        if (!rowsByMonth.length || rowsByMonth[rowsByMonth.length - 1].p !== p) rowsByMonth.push({ p, items: [] });
+        rowsByMonth[rowsByMonth.length - 1].items.push(tx);
+      });
+
+      return (
+        <div className="space-y-3 md:space-y-5">
+          <BudgetImport onImport={onImport} />
+
+          <div className="rounded-2xl p-3 md:p-4 flex flex-wrap items-center gap-2" style={{ background: t.panel, border: `1px solid ${t.border}`, boxShadow: t.shadow }}>
+            <select value={period} onChange={(e) => { setPeriod(e.target.value); setLimit(150); }} className="rounded-lg px-2 py-1.5 text-sm" style={select}>
+              <option value="all">Toute la période</option>
+              {years.map((y) => (
+                <optgroup key={y} label={y}>
+                  <option value={y}>Année {y}</option>
+                  {allMonths.filter((m) => m.startsWith(y)).map((m) => <option key={m} value={m}>{monthLong(m)}</option>)}
+                </optgroup>
+              ))}
+            </select>
+            {sources.length > 1 && (
+              <select value={filterSource} onChange={(e) => setFilterSource(e.target.value)} className="rounded-lg px-2 py-1.5 text-sm" style={select}>
+                <option value="all">Tous les comptes</option>
+                {sources.map((s) => <option key={s} value={s}>{sourceLabel(s)}</option>)}
+              </select>
+            )}
+            <input value={search} onChange={(e) => { setSearch(e.target.value); setLimit(150); }} placeholder="Rechercher un libellé…"
+              className="rounded-lg px-3 py-1.5 text-sm flex-1 min-w-[160px]" style={select} />
+          </div>
+
+          <Panel title="Totaux par catégorie"
+            subtitle={`${period === "all" ? "Toute la période" : period.length === 4 ? `Année ${period}` : monthLong(period)} · ${months.length} mois · cliquez une catégorie pour voir ses opérations`}
+            action={months.length > 1 && (
+              <div className="flex shrink-0 p-0.5 rounded-lg text-xs" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
+                {[["totaux", "Totaux"], ["mois", "Par mois"]].map(([v, l]) => (
+                  <button key={v} onClick={() => setView(v)} className="px-2.5 py-1 rounded-md" style={chip(view === v)}>{l}</button>
+                ))}
+              </div>
+            )}>
+            {view === "totaux" || months.length <= 1 ? (
+              <div className="space-y-5">
+                {groups.map((g) => (
+                  <div key={g.kind}>
+                    <div className="flex justify-between text-xs font-semibold mb-2 pb-1" style={{ color: t.text, borderBottom: `1px solid ${t.border}` }}>
+                      <span>{KIND_LABEL[g.kind]}</span>
+                      <span style={NUM}>{fmtEUR(g.total)}{months.length > 1 && <span style={{ color: t.textMuted, fontWeight: 400 }}> · {fmtEUR(g.total / months.length)} / mois</span>}</span>
+                    </div>
+                    <div className="space-y-1">
+                      {g.rows.map((r) => {
+                        const active = filterCat === r.cat;
+                        return (
+                          <button key={r.cat} type="button" onClick={() => { setFilterCat(active ? "all" : r.cat); setFilterKind("all"); setLimit(150); }}
+                            className="w-full text-left rounded-lg px-2 py-1.5" style={{ background: active ? t.panelAlt : "transparent" }}>
+                            <div className="flex items-center justify-between gap-2 text-xs">
+                              <span style={{ color: t.text, fontWeight: active ? 700 : 500 }}>{r.cat} <span style={{ color: t.textMuted, fontWeight: 400 }}>({r.count})</span></span>
+                              <span style={{ color: t.text, ...NUM }}>
+                                {fmtEUR(r.value)}
+                                {g.kind === "depense" && totalDepenses > 0 && <span style={{ color: t.textMuted }}> · {Math.round((r.value / totalDepenses) * 100)} %</span>}
+                                {months.length > 1 && !isMobile && <span style={{ color: t.textMuted }}> · {fmtEUR(r.value / months.length)} / mois</span>}
+                              </span>
+                            </div>
+                            {g.kind === "depense" && (
+                              <div className="h-1.5 rounded-full mt-1" style={{ background: t.panelAlt }}>
+                                <div className="h-1.5 rounded-full" style={{ width: `${Math.max(0, (r.value / maxDep) * 100)}%`, background: t.s2 }} />
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="overflow-x-auto -mx-1">
+                <table className="text-xs w-full" style={{ ...NUM, borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ color: t.textMuted }}>
+                      <th className="text-left font-medium py-1.5 pr-3 sticky left-0" style={{ background: t.panel }}>Catégorie</th>
+                      {months.map((m) => <th key={m} className="text-right font-medium py-1.5 px-2 whitespace-nowrap">{shortMonth(m)}</th>)}
+                      <th className="text-right font-semibold py-1.5 pl-3" style={{ color: t.text }}>Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {groups.map((g) => (
+                      <React.Fragment key={g.kind}>
+                        <tr><td colSpan={months.length + 2} className="pt-3 pb-1 font-semibold sticky left-0" style={{ color: t.text, background: t.panel }}>{KIND_LABEL[g.kind]}</td></tr>
+                        {g.rows.map((r) => (
+                          <tr key={r.cat} onClick={() => { setFilterCat(r.cat); setLimit(150); }} className="cursor-pointer" style={{ borderTop: `1px solid ${t.border}` }}>
+                            <td className="py-1.5 pr-3 whitespace-nowrap sticky left-0" style={{ color: t.text, background: t.panel }}>{r.cat}</td>
+                            {months.map((m) => {
+                              const v = g.sign * (r.byMonth[m] || 0);
+                              return <td key={m} className="text-right py-1.5 px-2" style={{ color: v ? t.text : t.border }}>{v ? Math.round(v).toLocaleString("fr-FR") : "–"}</td>;
+                            })}
+                            <td className="text-right py-1.5 pl-3 font-semibold" style={{ color: t.text }}>{Math.round(r.value).toLocaleString("fr-FR")}</td>
+                          </tr>
+                        ))}
+                        <tr style={{ borderTop: `1px solid ${t.border}` }}>
+                          <td className="py-1.5 pr-3 font-semibold sticky left-0" style={{ color: t.textMuted, background: t.panel }}>Total</td>
+                          {months.map((m) => {
+                            const v = g.rows.reduce((s, r) => s + g.sign * (r.byMonth[m] || 0), 0);
+                            return <td key={m} className="text-right py-1.5 px-2 font-semibold" style={{ color: t.textMuted }}>{Math.round(v).toLocaleString("fr-FR")}</td>;
+                          })}
+                          <td className="text-right py-1.5 pl-3 font-semibold" style={{ color: t.text }}>{Math.round(g.total).toLocaleString("fr-FR")}</td>
+                        </tr>
+                      </React.Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Panel>
+
+          <Panel title={`Mouvements (${visible.length})`}
+            subtitle="Changer la catégorie d'une ligne la mémorise pour ce marchand ou cette personne ; la sélection multiple ne change que les lignes cochées">
+              <div className="flex flex-wrap gap-2 mb-3">
+                <select value={filterKind} onChange={(e) => { setFilterKind(e.target.value); setFilterCat("all"); }} className="rounded-lg px-2 py-1.5 text-xs" style={select}>
+                  <option value="all">Tous types</option>
+                  {Object.entries(KIND_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                </select>
+                <select value={filterCat} onChange={(e) => setFilterCat(e.target.value)} className="rounded-lg px-2 py-1.5 text-xs" style={select}>
+                  <option value="all">Toutes catégories</option>
+                  {BUDGET_CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.id}</option>)}
+                </select>
+              </div>
+            {selected.size > 0 && (
+              <div className="fixed z-50 left-3 right-3 md:left-1/2 md:right-auto md:-translate-x-1/2 flex flex-wrap items-center gap-2 rounded-xl px-3 py-2.5 text-xs"
+                style={{ bottom: isMobile ? "calc(84px + env(safe-area-inset-bottom))" : 24, background: t.panel, border: `1px solid ${t.accent}`, boxShadow: t.shadow, color: t.text }}>
+                <span className="font-semibold">{selected.size} sélectionnée{selected.size > 1 ? "s" : ""}</span>
+                <span style={{ color: t.textMuted }}>→</span>
+                <select value={bulkCat} onChange={(e) => setBulkCat(e.target.value)} className="rounded-lg px-2 py-1 text-xs" style={select}>
+                  {BUDGET_CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.id}</option>)}
+                </select>
+                <button onClick={() => { onBulkCategory([...selected], bulkCat); setSelected(new Set()); }} className="px-3 py-1 rounded-lg font-medium" style={{ background: t.accent, color: t.onAccent }}>
+                  Réaffecter
+                </button>
+                <button onClick={() => setSelected(new Set())} className="px-2 py-1 rounded-lg" style={{ color: t.textMuted }}>Annuler</button>
+              </div>
+            )}
+            {shown.length > 0 && (
+              <label className="flex items-center gap-2 text-xs mb-2 cursor-pointer" style={{ color: t.textMuted }}>
+                <input type="checkbox" checked={allShownSelected}
+                  onChange={() => setSelected((s) => { const n = new Set(s); shown.forEach((tx) => (allShownSelected ? n.delete(tx.id) : n.add(tx.id))); return n; })} />
+                Tout cocher ({shown.length} lignes affichées)
+              </label>
+            )}
+            {rowsByMonth.map(({ p, items }) => {
+              const dep = items.filter((tx) => budgetKind(tx.cat) === "depense").reduce((s, tx) => s - tx.amt, 0);
+              return (
+                <div key={p} className="mb-3">
+                  <div className="flex justify-between text-xs font-semibold py-1.5 capitalize" style={{ color: t.textMuted, borderBottom: `1px solid ${t.border}` }}>
+                    <span>{monthLong(p)}</span>
+                    {dep !== 0 && <span className="normal-case" style={NUM}>dépenses affichées : {fmtEUR(dep)}</span>}
+                  </div>
+                  {items.map((tx) => {
+                    const kind = budgetKind(tx.cat);
+                    return (
+                      <div key={tx.id} className="py-2 flex flex-col md:flex-row md:items-center gap-1 md:gap-3" style={{ borderBottom: `1px solid ${t.border}`, opacity: kind === "neutre" ? 0.65 : 1 }}>
+                        <div className="flex items-center gap-2 md:gap-3 flex-1 min-w-0">
+                          <input type="checkbox" checked={selected.has(tx.id)} onChange={() => toggle(tx.id)} className="shrink-0" />
+                          <span className="text-xs w-12 shrink-0" style={{ color: t.textMuted, ...NUM }}>{fmtDate(tx.d)}</span>
+                          <span className="text-sm truncate flex-1" style={{ color: t.text }} title={tx.detail ? `${tx.desc} — ${tx.detail}` : tx.desc}>
+                            {tx.desc}
+                            {tx.detail && <span className="text-xs ml-1.5" style={{ color: t.textMuted }}>{tx.detail}</span>}
+                            {sources.length > 1 && <span className="text-[10px] ml-1.5 px-1.5 py-0.5 rounded" style={{ background: t.panelAlt, color: t.textMuted }}>{sourceLabel(tx.src)}</span>}
+                            {tx.manual && <span className="text-[10px] ml-1.5" style={{ color: t.textMuted }} title="Catégorie choisie à la main">✎</span>}
+                          </span>
+                          <span className="text-sm shrink-0 font-medium" style={{ color: tx.amt > 0 ? t.gain : t.text, ...NUM }}>
+                            {tx.amt > 0 ? "+" : ""}{fmtEURcents(tx.amt)}
+                          </span>
+                        </div>
+                        <select value={tx.cat} onChange={(e) => onSetCategory(tx, e.target.value)} className="rounded-lg px-2 py-1 text-xs md:w-48" style={select}>
+                          {BUDGET_CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.id}</option>)}
+                        </select>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+            {visible.length > limit && (
+              <button onClick={() => setLimit((l) => l + 300)} className="w-full mt-2 py-2 rounded-lg text-sm" style={{ background: t.panelAlt, color: t.text, border: `1px solid ${t.border}` }}>
+                Afficher plus ({visible.length - limit} restantes)
+              </button>
+            )}
+            {!visible.length && <p className="text-sm" style={{ color: t.textMuted }}>Aucun mouvement pour ces filtres.</p>}
+          </Panel>
+        </div>
+      );
+    }
+
     function PatrimoineApp() {
       const [themeName, setThemeName] = useState("dark");
       const t = THEMES[themeName];
@@ -2623,6 +3468,10 @@ Méthode de calcul de l'application :
       const [weeklyArchive, setWeeklyArchive] = useState([]);
       const [transfers, setTransfers] = useState(initialTransfers);
       const [recurringTransfers, setRecurringTransfers] = useState([]);
+      // Budget : opérations Revolut importées (un document Firestore par année) et catégories apprises par marchand
+      const [budgetTx, setBudgetTx] = useState([]);
+      const [budgetRules, setBudgetRules] = useState({});
+      const budgetSavedRef = useRef({ meta: null, years: {} });
       const [monthlyModalOpen, setMonthlyModalOpen] = useState(false);
       const [monthlyModalKey, setMonthlyModalKey] = useState(0);
       const [tab, setTab] = useState("dashboard");
@@ -2662,6 +3511,18 @@ Méthode de calcul de l'application :
               if (saved.transfers) setTransfers(saved.transfers);
               if (saved.recurringTransfers) setRecurringTransfers(saved.recurringTransfers);
             }
+            const metaSnap = await getDoc(budgetMetaRef);
+            if (!annule && metaSnap.exists()) {
+              const meta = metaSnap.data();
+              const years = meta.years || [];
+              const snaps = await Promise.all(years.map((y) => getDoc(budgetYearRef(y))));
+              const tx = snaps.flatMap((sn) => (sn.exists() ? sn.data().tx || [] : []));
+              budgetSavedRef.current = {
+                meta: JSON.stringify({ rules: meta.rules || {}, years }),
+                years: Object.fromEntries(years.map((y) => [y, JSON.stringify(tx.filter((x) => x.d.startsWith(y)))])),
+              };
+              if (!annule) { setBudgetRules(meta.rules || {}); setBudgetTx(tx); }
+            }
           } catch (e) {
             console.error("Erreur de chargement Firebase:", e);
           }
@@ -2694,6 +3555,98 @@ Méthode de calcul de l'application :
         return () => clearTimeout(delai);
       }, [positions, monthly, weeklyArchive, transfers, recurringTransfers, loaded]);
 
+      // Sauvegarde du budget : on ne réécrit que les années modifiées
+      useEffect(() => {
+        if (!loaded) return;
+        const delai = setTimeout(async () => {
+          const saved = budgetSavedRef.current;
+          const byYear = {};
+          budgetTx.forEach((tx) => { (byYear[tx.d.slice(0, 4)] ||= []).push(tx); });
+          const years = Object.keys(byYear).sort();
+          const toWrite = [...new Set([...years, ...Object.keys(saved.years)])]
+            .map((y) => [y, JSON.stringify(byYear[y] || [])])
+            .filter(([y, json]) => saved.years[y] !== json);
+          const metaJson = JSON.stringify({ rules: budgetRules, years });
+          if (!toWrite.length && metaJson === saved.meta) return;
+          setSaveStatus("saving");
+          try {
+            await Promise.all(toWrite.map(([y, json]) => setDoc(budgetYearRef(y), { tx: JSON.parse(json) })));
+            if (metaJson !== saved.meta) await setDoc(budgetMetaRef, { rules: budgetRules, years, derniereMiseAJour: new Date().toISOString() });
+            toWrite.forEach(([y, json]) => { if (byYear[y]) saved.years[y] = json; else delete saved.years[y]; });
+            saved.meta = metaJson;
+            setSaveStatus("saved");
+            setLastSaved(new Date());
+          } catch (e) {
+            console.error("Erreur de sauvegarde du budget:", e);
+            setSaveStatus("erreur");
+          }
+        }, 800);
+        return () => clearTimeout(delai);
+      }, [budgetTx, budgetRules, loaded]);
+
+      const handleBudgetImport = async (files) => {
+        const transactions = [];
+        const warnings = [];
+        let skippedCurrency = 0, skippedState = 0, controles = 0;
+        for (const file of files) {
+          try {
+            if (file.name.toLowerCase().endsWith(".pdf")) {
+              const parsed = parseLclPages(await readPdfPages(file));
+              if (!parsed.ops.length) throw new Error("aucune opération trouvée (seuls les relevés de compte LCL en PDF sont reconnus)");
+              const total = parsed.ancienSolde + parsed.ops.reduce((s, o) => s + o.amt, 0);
+              if (parsed.ancienSolde !== null && parsed.nouveauSolde !== null && Math.abs(total - parsed.nouveauSolde) > 0.01) {
+                warnings.push(`${file.name} : le total lu (${fmtEURcents(total)}) ne retombe pas sur le solde du relevé (${fmtEURcents(parsed.nouveauSolde)}) — vérifiez ses opérations`);
+              } else if (parsed.nouveauSolde !== null) controles++;
+              transactions.push(...lclTransactions(parsed, budgetRules));
+            } else {
+              const { headers, rows } = await readFileAsRows(file);
+              if (!headers?.length) throw new Error("fichier vide ou illisible");
+              const r = parseRevolutRows(headers, rows, budgetRules);
+              if (!r.transactions.length) throw new Error("aucune opération en euros trouvée");
+              transactions.push(...r.transactions);
+              skippedCurrency += r.skippedCurrency; skippedState += r.skippedState;
+            }
+          } catch (e) {
+            warnings.push(`${file.name} : ${e.message || "lecture impossible"}`);
+          }
+        }
+        if (!transactions.length) throw new Error(warnings.join(" · ") || "aucune opération trouvée");
+        const known = new Map(budgetTx.map((tx) => [tx.id, tx]));
+        const freshMap = new Map();
+        transactions.forEach((tx) => { if (!known.has(tx.id) && !freshMap.has(tx.id)) freshMap.set(tx.id, tx); });
+        const fresh = [...freshMap.values()];
+        // Une opération « en attente » déjà connue est mise à jour (montant final), sans perdre la catégorie choisie
+        const settled = transactions.filter((tx) => known.get(tx.id)?.pending && !tx.pending);
+        setBudgetTx((prev) => {
+          const upd = new Map(settled.map((tx) => [tx.id, tx]));
+          return [...prev.map((tx) => (upd.has(tx.id) ? { ...upd.get(tx.id), cat: tx.cat, manual: tx.manual } : tx)), ...fresh];
+        });
+        const ds = transactions.map((tx) => tx.d).sort();
+        const dup = transactions.length - fresh.length;
+        const parts = [`${fresh.length} nouvelle${fresh.length > 1 ? "s" : ""} opération${fresh.length > 1 ? "s" : ""} (du ${new Date(ds[0]).toLocaleDateString("fr-FR")} au ${new Date(ds[ds.length - 1]).toLocaleDateString("fr-FR")})`];
+        if (dup) parts.push(`${dup} déjà importée${dup > 1 ? "s" : ""}`);
+        if (controles) parts.push(`soldes vérifiés sur ${controles} relevé${controles > 1 ? "s" : ""} LCL ✓`);
+        if (skippedCurrency) parts.push(`${skippedCurrency} hors euros ignorée${skippedCurrency > 1 ? "s" : ""}`);
+        if (skippedState) parts.push(`${skippedState} annulée${skippedState > 1 ? "s" : ""} ignorée${skippedState > 1 ? "s" : ""}`);
+        return { info: parts.join(" · "), warnings };
+      };
+      const handleBudgetCategory = (tx, cat) => {
+        const key = budgetKey(tx.desc);
+        if (key) setBudgetRules((r) => ({ ...r, [key]: cat }));
+        setBudgetTx((prev) => prev.map((x) => {
+          if (x.id === tx.id) return { ...x, cat, manual: true };
+          if (key && !x.manual && budgetKey(x.desc) === key) return { ...x, cat };
+          return x;
+        }));
+      };
+      const handleBulkCategory = (ids, cat) => {
+        const set = new Set(ids);
+        setBudgetTx((prev) => prev.map((x) => (set.has(x.id) ? { ...x, cat, manual: true } : x)));
+      };
+      const handleDeleteBudgetRule = (key) => setBudgetRules(({ [key]: _, ...rest }) => rest);
+      const handleDeleteBudgetMonth = (p) => setBudgetTx((prev) => prev.filter((tx) => !tx.d.startsWith(p)));
+      const budgetMonths = useMemo(() => buildBudgetMonths(budgetTx), [budgetTx]);
+
       const handleReset = () => {
         setPositions(stockPositions);
         setMonthly(initialMonthlySnapshots);
@@ -2703,7 +3656,7 @@ Méthode de calcul de l'application :
       };
 
       const handleExport = () => {
-        const payload = { positions, monthly, weekly: weeklyArchive, transfers, recurringTransfers, seedVersion: SEED_VERSION, exportedAt: new Date().toISOString() };
+        const payload = { positions, monthly, weekly: weeklyArchive, transfers, recurringTransfers, budget: { transactions: budgetTx, rules: budgetRules }, seedVersion: SEED_VERSION, exportedAt: new Date().toISOString() };
         const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -2724,6 +3677,8 @@ Méthode de calcul de l'application :
           if (data.weekly) setWeeklyArchive(data.weekly);
           if (data.transfers) setTransfers(data.transfers);
           if (data.recurringTransfers) setRecurringTransfers(data.recurringTransfers);
+          if (data.budget?.transactions) setBudgetTx(data.budget.transactions);
+          if (data.budget?.rules) setBudgetRules(data.budget.rules);
         } catch (e) {
           alert("Fichier de sauvegarde illisible");
         }
@@ -2863,7 +3818,7 @@ Méthode de calcul de l'application :
         setChatOpen(true);
       };
       const chatContext = useMemo(() => buildChatContext({
-        monthlyEff, monthlyMetrics, yearlyMetrics, positions, transfers,
+        monthlyEff, monthlyMetrics, yearlyMetrics, positions, transfers, budgetMonths,
         kpis: {
           "Patrimoine total": fmtEUR(lastMonthly?.totalWealth),
           "Variation sur le dernier mois": `${fmtEUR(totalWealthChange)} (${fmtPct(lastMonthVariationPct)})`,
@@ -2875,11 +3830,13 @@ Méthode de calcul de l'application :
           "Épargne versée moyenne / an": `${fmtEUR(avgAnnualVersements)} (sur ${monthsTracked} mois)`,
           "Rendement annuel moyen": fmtPct(avgYield),
         },
-      }), [monthlyEff, monthlyMetrics, yearlyMetrics, positions, transfers]);
+      }), [monthlyEff, monthlyMetrics, yearlyMetrics, positions, transfers, budgetMonths]);
 
       const NAV_ITEMS = [
         { id: "dashboard", label: "Tableau de bord", short: "Accueil", icon: LayoutDashboard },
         { id: "positions", label: "Positions", short: "Positions", icon: Briefcase },
+        { id: "budget", label: "Budget", short: "Budget", icon: Receipt },
+        { id: "operations", label: "Opérations", short: "Opérations", icon: List },
         { id: "virements", label: "Virements", short: "Virements", icon: ArrowLeftRight },
         { id: "historique", label: "Historique", short: "Historique", icon: History },
       ];
@@ -3045,6 +4002,22 @@ Méthode de calcul de l'application :
                       sub={isMobile ? `Sur ${monthsTracked} mois` : `Ramené à 12 mois (sur ${monthsTracked} mois)`} />
                   </div>
 
+                  {budgetMonths.length > 0 && (() => {
+                    const b = budgetMonths[budgetMonths.length - 1];
+                    return (
+                      <button type="button" onClick={() => goTab("budget")} className="w-full text-left rounded-2xl p-4 md:p-5 flex flex-wrap items-center gap-x-6 gap-y-2"
+                        style={{ background: t.panel, border: `1px solid ${t.border}`, boxShadow: t.shadow }}>
+                        <span className="text-sm font-semibold flex items-center gap-2" style={{ color: t.text }}>
+                          <Receipt size={16} color={t.accent} /> Budget de {monthLong(b.periode)}
+                        </span>
+                        {[["Salaires", fmtEUR(b.salaire)], ["Dépenses", fmtEUR(b.depenses)], ["Reste", signed(b.solde)]].map(([l, v]) => (
+                          <span key={l} className="text-xs" style={{ color: t.textMuted }}>{l} <span className="text-sm font-semibold ml-1" style={{ color: t.text, ...NUM }}>{v}</span></span>
+                        ))}
+                        <ChevronRight size={16} color={t.textMuted} className="ml-auto" />
+                      </button>
+                    );
+                  })()}
+
                   <Panel title="Évolution mensuelle" subtitle="Ce que vos revenus (moins vos dépenses) et vos placements ont apporté au patrimoine, mois par mois"
                     action={
                       <div className="flex shrink-0 p-0.5 rounded-lg text-xs" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
@@ -3118,6 +4091,26 @@ Méthode de calcul de l'application :
                 </Panel>
               )}
 
+              {tab === "budget" && (
+                <BudgetTab
+                  transactions={budgetTx}
+                  rules={budgetRules}
+                  onImport={handleBudgetImport}
+                  onSetCategory={handleBudgetCategory}
+                  onDeleteRule={handleDeleteBudgetRule}
+                  onDeleteMonth={handleDeleteBudgetMonth}
+                />
+              )}
+
+              {tab === "operations" && (
+                <OperationsTab
+                  transactions={budgetTx}
+                  onImport={handleBudgetImport}
+                  onSetCategory={handleBudgetCategory}
+                  onBulkCategory={handleBulkCategory}
+                />
+              )}
+
               {tab === "virements" && (
                 <Panel title={`Virements (${transfers.length})`}>
                   <TransfersTab
@@ -3151,7 +4144,7 @@ Méthode de calcul de l'application :
                 style={{ bottom: "calc(76px + env(safe-area-inset-bottom))", background: t.accent, color: t.onAccent, boxShadow: `0 8px 24px ${t.accent}66` }}>
                 <Plus size={24} />
               </button>
-              <nav className="fixed bottom-0 inset-x-0 z-40 grid grid-cols-4"
+              <nav className="fixed bottom-0 inset-x-0 z-40 grid grid-cols-6"
                 style={{ background: `${t.panel}f2`, backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", borderTop: `1px solid ${t.border}`, paddingBottom: "env(safe-area-inset-bottom)" }}>
                 {NAV_ITEMS.map((n) => {
                   const Icon = n.icon;
