@@ -3298,6 +3298,10 @@ Méthode de calcul de l'application :
       const [annee, setAnnee] = useState(null);
       const [filterCat, setFilterCat] = useState("all");
       const [txLimit, setTxLimit] = useState(200);
+      const [txSens, setTxSens] = useState("all");
+      const [txMin, setTxMin] = useState("");
+      const [txMax, setTxMax] = useState("");
+      const [txSort, setTxSort] = useState("date");
       const years = useMemo(() => [...new Set(months.map((m) => m.periode.slice(0, 4)))], [months]);
       const monthCurrent = months.find((m) => m.periode === periode) || months[months.length - 1];
       const year = years.includes(annee) ? annee : years[years.length - 1];
@@ -3345,10 +3349,16 @@ Méthode de calcul de l'application :
 
       const monthTx = useMemo(() => {
         if (!current) return [];
+        const lo = txMin === "" ? null : Number(txMin), hi = txMax === "" ? null : Number(txMax);
         return transactions
-          .filter((tx) => tx.d.startsWith(current.periode) && (filterCat === "all" || tx.cat === filterCat))
-          .sort((a, b) => b.d.localeCompare(a.d) || a.amt - b.amt);
-      }, [transactions, current, filterCat]);
+          .filter((tx) => tx.d.startsWith(current.periode) && (filterCat === "all" || tx.cat === filterCat) &&
+            (txSens === "all" || (txSens === "out" ? tx.amt < 0 : tx.amt > 0)) &&
+            (lo === null || Math.abs(tx.amt) >= lo) && (hi === null || Math.abs(tx.amt) <= hi))
+          .sort(txSort === "date" ? (a, b) => b.d.localeCompare(a.d) || a.amt - b.amt
+            : txSort === "desc" ? (a, b) => Math.abs(b.amt) - Math.abs(a.amt) || b.d.localeCompare(a.d)
+            : (a, b) => Math.abs(a.amt) - Math.abs(b.amt) || b.d.localeCompare(a.d));
+      }, [transactions, current, filterCat, txSens, txMin, txMax, txSort]);
+      const txTotals = monthTx.reduce((acc, tx) => { if (tx.amt < 0) acc.out -= tx.amt; else acc.in += tx.amt; return acc; }, { out: 0, in: 0 });
 
       const ruleEntries = Object.entries(rules).sort((a, b) => a[0].localeCompare(b[0]));
       const select = { background: t.panel, color: t.text, border: `1px solid ${t.border}` };
@@ -3495,13 +3505,42 @@ Méthode de calcul de l'application :
           </Panel>
 
           <Panel title={`Opérations — ${periodLabel}${filterCat !== "all" ? ` · ${filterCat}` : ""} (${monthTx.length})`}
-            subtitle="Changer une catégorie l'applique aux autres opérations du même marchand et aux prochains relevés"
-            action={
-              <select value={filterCat} onChange={(e) => setFilterCat(e.target.value)} className="rounded-lg px-2 py-1.5 text-xs shrink-0" style={select}>
-                <option value="all">Toutes</option>
+            subtitle="Changer une catégorie l'applique aux autres opérations du même marchand et aux prochains relevés">
+            <div className="flex flex-wrap items-center gap-2 mb-2 text-sm">
+              <select value={filterCat} onChange={(e) => { setFilterCat(e.target.value); setTxLimit(200); }} className="rounded-lg px-2 py-1.5 text-sm" style={select}>
+                <option value="all">Toutes catégories</option>
                 {BUDGET_CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.id}</option>)}
               </select>
-            }>
+              <select value={txSens} onChange={(e) => { setTxSens(e.target.value); setTxLimit(200); }} className="rounded-lg px-2 py-1.5 text-sm" style={select}>
+                <option value="all">Entrées et sorties</option>
+                <option value="out">Sorties (dépenses)</option>
+                <option value="in">Entrées</option>
+              </select>
+              <span className="flex items-center gap-1.5" style={{ color: t.textMuted }}>
+                Montant
+                <input type="number" inputMode="decimal" min="0" value={txMin} onChange={(e) => { setTxMin(e.target.value); setTxLimit(200); }} placeholder="min"
+                  className="w-20 rounded-lg px-2 py-1.5 text-sm text-right" style={{ ...select, ...NUM }} />
+                à
+                <input type="number" inputMode="decimal" min="0" value={txMax} onChange={(e) => { setTxMax(e.target.value); setTxLimit(200); }} placeholder="max"
+                  className="w-20 rounded-lg px-2 py-1.5 text-sm text-right" style={{ ...select, ...NUM }} />
+                €
+              </span>
+              <select value={txSort} onChange={(e) => setTxSort(e.target.value)} className="rounded-lg px-2 py-1.5 text-sm" style={select}>
+                <option value="date">Tri : date</option>
+                <option value="desc">Tri : montant décroissant</option>
+                <option value="asc">Tri : montant croissant</option>
+              </select>
+              {(txSens !== "all" || txMin !== "" || txMax !== "" || txSort !== "date" || filterCat !== "all") && (
+                <button onClick={() => { setTxSens("all"); setTxMin(""); setTxMax(""); setTxSort("date"); setFilterCat("all"); }} className="text-xs px-2 py-1 rounded-lg" style={{ color: t.textMuted, border: `1px solid ${t.border}` }}>
+                  Réinitialiser
+                </button>
+              )}
+            </div>
+            <p className="text-xs mb-1" style={{ color: t.textMuted, ...NUM }}>
+              {txTotals.out > 0 && <>Sorties affichées : <span style={{ color: t.text }}>{fmtEUR(txTotals.out)}</span></>}
+              {txTotals.out > 0 && txTotals.in > 0 && " · "}
+              {txTotals.in > 0 && <>Entrées affichées : <span style={{ color: t.text }}>{fmtEUR(txTotals.in)}</span></>}
+            </p>
             <div className="divide-y" style={{ borderColor: t.border }}>
               {monthTx.slice(0, txLimit).map((tx) => {
                 const kind = budgetKind(tx.cat);
@@ -3509,7 +3548,7 @@ Méthode de calcul de l'application :
                 return (
                   <div key={tx.id} className="py-2 flex flex-col md:flex-row md:items-center gap-1 md:gap-3" style={{ borderColor: t.border, opacity: muted ? 0.6 : 1 }}>
                     <div className="flex items-center gap-3 flex-1 min-w-0">
-                      <span className="text-xs w-12 shrink-0" style={{ color: t.textMuted, ...NUM }}>{fmtDate(tx.d)}</span>
+                      <span className="text-xs w-12 shrink-0" style={{ color: t.textMuted, ...NUM }}>{fmtDate(tx.d)}{annual && txSort !== "date" && <span className="block text-[10px]">{tx.d.slice(0, 4)}</span>}</span>
                       <span className="text-sm truncate flex-1" style={{ color: t.text }} title={tx.desc}>
                         {tx.desc}{tx.pending && <span className="text-[10px] ml-1" style={{ color: t.warning }}>en attente</span>}
                       </span>
