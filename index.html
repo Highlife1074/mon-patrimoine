@@ -45,7 +45,7 @@
       Wallet, TrendingUp, PiggyBank, Percent, Plus, Moon, Sun,
       ChevronDown, ChevronRight, ChevronLeft, X, ArrowUpRight, ArrowDownRight,
       Link2, Check, Clock, ArrowLeftRight, RefreshCw, Download, Upload, LogOut,
-      LayoutDashboard, Briefcase, History, MoreHorizontal, MessageCircle, Send, KeyRound, Receipt
+      LayoutDashboard, Briefcase, History, MoreHorizontal, MessageCircle, Send, KeyRound, Receipt, List
     } from "lucide-react";
     
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
@@ -480,6 +480,7 @@
           amt,
           type: revolutType(col.type >= 0 ? r[col.type] : ""),
           product: col.product >= 0 ? String(r[col.product] || "") : "",
+          src: "revolut",
         };
         if (/pending|attente|en cours/i.test(state)) tx.pending = true;
         tx.cat = categorizeTx(tx, rules);
@@ -3050,6 +3051,269 @@ Méthode de calcul de l'application :
       );
     }
 
+    // ================== ONGLET OPÉRATIONS (tous les mouvements) ==================
+    const BUDGET_SOURCES = { revolut: "Revolut", lcl: "LCL" };
+    const KIND_LABEL = { revenu: "Revenus", depense: "Dépenses", epargne: "Versements vers les placements", neutre: "Virements entre mes comptes" };
+    const shortMonth = (p) => periodeDate(p).toLocaleDateString("fr-FR", { month: "short", year: "2-digit" });
+
+    function OperationsTab({ transactions, onImport, onSetCategory, onBulkCategory }) {
+      const t = useTheme();
+      const isMobile = useIsMobile();
+      const [period, setPeriod] = useState("all");
+      const [filterCat, setFilterCat] = useState("all");
+      const [filterKind, setFilterKind] = useState("all");
+      const [filterSource, setFilterSource] = useState("all");
+      const [search, setSearch] = useState("");
+      const [limit, setLimit] = useState(150);
+      const [selected, setSelected] = useState(() => new Set());
+      const [bulkCat, setBulkCat] = useState("Famille & proches");
+      const [view, setView] = useState("totaux");
+
+      const allMonths = useMemo(() => [...new Set(transactions.map((tx) => tx.d.slice(0, 7)))].sort().reverse(), [transactions]);
+      const years = useMemo(() => [...new Set(allMonths.map((m) => m.slice(0, 4)))], [allMonths]);
+      const sources = useMemo(() => [...new Set(transactions.map((tx) => tx.src || "revolut"))], [transactions]);
+
+      // Filtres de période / compte / recherche : ils déterminent aussi la synthèse par catégorie
+      const scoped = useMemo(() => {
+        const q = normTxt(search);
+        return transactions.filter((tx) =>
+          (period === "all" || tx.d.startsWith(period)) &&
+          (filterSource === "all" || (tx.src || "revolut") === filterSource) &&
+          (!q || normTxt(tx.desc).includes(q) || normTxt(tx.cat).includes(q))
+        );
+      }, [transactions, period, filterSource, search]);
+      const visible = useMemo(() => scoped
+        .filter((tx) => (filterCat === "all" || tx.cat === filterCat) && (filterKind === "all" || budgetKind(tx.cat) === filterKind))
+        .sort((a, b) => b.d.localeCompare(a.d) || a.amt - b.amt), [scoped, filterCat, filterKind]);
+
+      const months = useMemo(() => [...new Set(scoped.map((tx) => tx.d.slice(0, 7)))].sort(), [scoped]);
+      const summary = useMemo(() => {
+        const byCat = {};
+        scoped.forEach((tx) => {
+          const r = (byCat[tx.cat] ||= { cat: tx.cat, kind: budgetKind(tx.cat), total: 0, count: 0, byMonth: {} });
+          r.total += tx.amt; r.count++;
+          const p = tx.d.slice(0, 7);
+          r.byMonth[p] = (r.byMonth[p] || 0) + tx.amt;
+        });
+        return byCat;
+      }, [scoped]);
+      const groups = ["depense", "revenu", "epargne", "neutre"].map((kind) => {
+        const rows = BUDGET_CATEGORIES.filter((c) => c.kind === kind && summary[c.id]).map((c) => summary[c.id]);
+        // Dépenses et versements en positif, revenus en positif : on affiche ce qui « sort » ou « entre »
+        const sign = kind === "revenu" || kind === "neutre" ? 1 : -1;
+        const list = rows.map((r) => ({ ...r, value: sign * r.total })).sort((a, b) => b.value - a.value);
+        return { kind, rows: list, total: list.reduce((s, r) => s + r.value, 0), sign };
+      }).filter((g) => g.rows.length);
+      const totalDepenses = groups.find((g) => g.kind === "depense")?.total || 0;
+      const maxDep = Math.max(1, ...(groups.find((g) => g.kind === "depense")?.rows || []).map((r) => r.value));
+
+      const toggle = (id) => setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+      const shown = visible.slice(0, limit);
+      const allShownSelected = shown.length > 0 && shown.every((tx) => selected.has(tx.id));
+      const select = { background: t.panel, color: t.text, border: `1px solid ${t.border}` };
+      const chip = (active) => ({ background: active ? t.panel : "transparent", color: active ? t.text : t.textMuted, fontWeight: active ? 600 : 400 });
+
+      if (!transactions.length) {
+        return (
+          <div className="space-y-4">
+            <BudgetImport onImport={onImport} />
+            <p className="text-sm" style={{ color: t.textMuted }}>Aucune opération pour l'instant : importez un relevé.</p>
+          </div>
+        );
+      }
+
+      // Liste regroupée par mois
+      const rowsByMonth = [];
+      shown.forEach((tx) => {
+        const p = tx.d.slice(0, 7);
+        if (!rowsByMonth.length || rowsByMonth[rowsByMonth.length - 1].p !== p) rowsByMonth.push({ p, items: [] });
+        rowsByMonth[rowsByMonth.length - 1].items.push(tx);
+      });
+
+      return (
+        <div className="space-y-3 md:space-y-5">
+          <BudgetImport onImport={onImport} />
+
+          <div className="rounded-2xl p-3 md:p-4 flex flex-wrap items-center gap-2" style={{ background: t.panel, border: `1px solid ${t.border}`, boxShadow: t.shadow }}>
+            <select value={period} onChange={(e) => { setPeriod(e.target.value); setLimit(150); }} className="rounded-lg px-2 py-1.5 text-sm" style={select}>
+              <option value="all">Toute la période</option>
+              {years.map((y) => (
+                <optgroup key={y} label={y}>
+                  <option value={y}>Année {y}</option>
+                  {allMonths.filter((m) => m.startsWith(y)).map((m) => <option key={m} value={m}>{monthLong(m)}</option>)}
+                </optgroup>
+              ))}
+            </select>
+            {sources.length > 1 && (
+              <select value={filterSource} onChange={(e) => setFilterSource(e.target.value)} className="rounded-lg px-2 py-1.5 text-sm" style={select}>
+                <option value="all">Tous les comptes</option>
+                {sources.map((s) => <option key={s} value={s}>{BUDGET_SOURCES[s] || s}</option>)}
+              </select>
+            )}
+            <input value={search} onChange={(e) => { setSearch(e.target.value); setLimit(150); }} placeholder="Rechercher un libellé…"
+              className="rounded-lg px-3 py-1.5 text-sm flex-1 min-w-[160px]" style={select} />
+          </div>
+
+          <Panel title="Totaux par catégorie"
+            subtitle={`${period === "all" ? "Toute la période" : period.length === 4 ? `Année ${period}` : monthLong(period)} · ${months.length} mois · cliquez une catégorie pour voir ses opérations`}
+            action={months.length > 1 && (
+              <div className="flex shrink-0 p-0.5 rounded-lg text-xs" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
+                {[["totaux", "Totaux"], ["mois", "Par mois"]].map(([v, l]) => (
+                  <button key={v} onClick={() => setView(v)} className="px-2.5 py-1 rounded-md" style={chip(view === v)}>{l}</button>
+                ))}
+              </div>
+            )}>
+            {view === "totaux" || months.length <= 1 ? (
+              <div className="space-y-5">
+                {groups.map((g) => (
+                  <div key={g.kind}>
+                    <div className="flex justify-between text-xs font-semibold mb-2 pb-1" style={{ color: t.text, borderBottom: `1px solid ${t.border}` }}>
+                      <span>{KIND_LABEL[g.kind]}</span>
+                      <span style={NUM}>{fmtEUR(g.total)}{months.length > 1 && <span style={{ color: t.textMuted, fontWeight: 400 }}> · {fmtEUR(g.total / months.length)} / mois</span>}</span>
+                    </div>
+                    <div className="space-y-1">
+                      {g.rows.map((r) => {
+                        const active = filterCat === r.cat;
+                        return (
+                          <button key={r.cat} type="button" onClick={() => { setFilterCat(active ? "all" : r.cat); setFilterKind("all"); setLimit(150); }}
+                            className="w-full text-left rounded-lg px-2 py-1.5" style={{ background: active ? t.panelAlt : "transparent" }}>
+                            <div className="flex items-center justify-between gap-2 text-xs">
+                              <span style={{ color: t.text, fontWeight: active ? 700 : 500 }}>{r.cat} <span style={{ color: t.textMuted, fontWeight: 400 }}>({r.count})</span></span>
+                              <span style={{ color: t.text, ...NUM }}>
+                                {fmtEUR(r.value)}
+                                {g.kind === "depense" && totalDepenses > 0 && <span style={{ color: t.textMuted }}> · {Math.round((r.value / totalDepenses) * 100)} %</span>}
+                                {months.length > 1 && !isMobile && <span style={{ color: t.textMuted }}> · {fmtEUR(r.value / months.length)} / mois</span>}
+                              </span>
+                            </div>
+                            {g.kind === "depense" && (
+                              <div className="h-1.5 rounded-full mt-1" style={{ background: t.panelAlt }}>
+                                <div className="h-1.5 rounded-full" style={{ width: `${Math.max(0, (r.value / maxDep) * 100)}%`, background: t.s2 }} />
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="overflow-x-auto -mx-1">
+                <table className="text-xs w-full" style={{ ...NUM, borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ color: t.textMuted }}>
+                      <th className="text-left font-medium py-1.5 pr-3 sticky left-0" style={{ background: t.panel }}>Catégorie</th>
+                      {months.map((m) => <th key={m} className="text-right font-medium py-1.5 px-2 whitespace-nowrap">{shortMonth(m)}</th>)}
+                      <th className="text-right font-semibold py-1.5 pl-3" style={{ color: t.text }}>Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {groups.map((g) => (
+                      <React.Fragment key={g.kind}>
+                        <tr><td colSpan={months.length + 2} className="pt-3 pb-1 font-semibold sticky left-0" style={{ color: t.text, background: t.panel }}>{KIND_LABEL[g.kind]}</td></tr>
+                        {g.rows.map((r) => (
+                          <tr key={r.cat} onClick={() => { setFilterCat(r.cat); setLimit(150); }} className="cursor-pointer" style={{ borderTop: `1px solid ${t.border}` }}>
+                            <td className="py-1.5 pr-3 whitespace-nowrap sticky left-0" style={{ color: t.text, background: t.panel }}>{r.cat}</td>
+                            {months.map((m) => {
+                              const v = g.sign * (r.byMonth[m] || 0);
+                              return <td key={m} className="text-right py-1.5 px-2" style={{ color: v ? t.text : t.border }}>{v ? Math.round(v).toLocaleString("fr-FR") : "–"}</td>;
+                            })}
+                            <td className="text-right py-1.5 pl-3 font-semibold" style={{ color: t.text }}>{Math.round(r.value).toLocaleString("fr-FR")}</td>
+                          </tr>
+                        ))}
+                        <tr style={{ borderTop: `1px solid ${t.border}` }}>
+                          <td className="py-1.5 pr-3 font-semibold sticky left-0" style={{ color: t.textMuted, background: t.panel }}>Total</td>
+                          {months.map((m) => {
+                            const v = g.rows.reduce((s, r) => s + g.sign * (r.byMonth[m] || 0), 0);
+                            return <td key={m} className="text-right py-1.5 px-2 font-semibold" style={{ color: t.textMuted }}>{Math.round(v).toLocaleString("fr-FR")}</td>;
+                          })}
+                          <td className="text-right py-1.5 pl-3 font-semibold" style={{ color: t.text }}>{Math.round(g.total).toLocaleString("fr-FR")}</td>
+                        </tr>
+                      </React.Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Panel>
+
+          <Panel title={`Mouvements (${visible.length})`}
+            subtitle="Changer la catégorie d'une ligne la mémorise pour ce marchand ou cette personne ; la sélection multiple ne change que les lignes cochées">
+              <div className="flex flex-wrap gap-2 mb-3">
+                <select value={filterKind} onChange={(e) => { setFilterKind(e.target.value); setFilterCat("all"); }} className="rounded-lg px-2 py-1.5 text-xs" style={select}>
+                  <option value="all">Tous types</option>
+                  {Object.entries(KIND_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                </select>
+                <select value={filterCat} onChange={(e) => setFilterCat(e.target.value)} className="rounded-lg px-2 py-1.5 text-xs" style={select}>
+                  <option value="all">Toutes catégories</option>
+                  {BUDGET_CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.id}</option>)}
+                </select>
+              </div>
+            {selected.size > 0 && (
+              <div className="fixed z-50 left-3 right-3 md:left-1/2 md:right-auto md:-translate-x-1/2 flex flex-wrap items-center gap-2 rounded-xl px-3 py-2.5 text-xs"
+                style={{ bottom: isMobile ? "calc(84px + env(safe-area-inset-bottom))" : 24, background: t.panel, border: `1px solid ${t.accent}`, boxShadow: t.shadow, color: t.text }}>
+                <span className="font-semibold">{selected.size} sélectionnée{selected.size > 1 ? "s" : ""}</span>
+                <span style={{ color: t.textMuted }}>→</span>
+                <select value={bulkCat} onChange={(e) => setBulkCat(e.target.value)} className="rounded-lg px-2 py-1 text-xs" style={select}>
+                  {BUDGET_CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.id}</option>)}
+                </select>
+                <button onClick={() => { onBulkCategory([...selected], bulkCat); setSelected(new Set()); }} className="px-3 py-1 rounded-lg font-medium" style={{ background: t.accent, color: t.onAccent }}>
+                  Réaffecter
+                </button>
+                <button onClick={() => setSelected(new Set())} className="px-2 py-1 rounded-lg" style={{ color: t.textMuted }}>Annuler</button>
+              </div>
+            )}
+            {shown.length > 0 && (
+              <label className="flex items-center gap-2 text-xs mb-2 cursor-pointer" style={{ color: t.textMuted }}>
+                <input type="checkbox" checked={allShownSelected}
+                  onChange={() => setSelected((s) => { const n = new Set(s); shown.forEach((tx) => (allShownSelected ? n.delete(tx.id) : n.add(tx.id))); return n; })} />
+                Tout cocher ({shown.length} lignes affichées)
+              </label>
+            )}
+            {rowsByMonth.map(({ p, items }) => {
+              const dep = items.filter((tx) => budgetKind(tx.cat) === "depense").reduce((s, tx) => s - tx.amt, 0);
+              return (
+                <div key={p} className="mb-3">
+                  <div className="flex justify-between text-xs font-semibold py-1.5 capitalize" style={{ color: t.textMuted, borderBottom: `1px solid ${t.border}` }}>
+                    <span>{monthLong(p)}</span>
+                    {dep !== 0 && <span className="normal-case" style={NUM}>dépenses affichées : {fmtEUR(dep)}</span>}
+                  </div>
+                  {items.map((tx) => {
+                    const kind = budgetKind(tx.cat);
+                    return (
+                      <div key={tx.id} className="py-2 flex flex-col md:flex-row md:items-center gap-1 md:gap-3" style={{ borderBottom: `1px solid ${t.border}`, opacity: kind === "neutre" ? 0.65 : 1 }}>
+                        <div className="flex items-center gap-2 md:gap-3 flex-1 min-w-0">
+                          <input type="checkbox" checked={selected.has(tx.id)} onChange={() => toggle(tx.id)} className="shrink-0" />
+                          <span className="text-xs w-12 shrink-0" style={{ color: t.textMuted, ...NUM }}>{fmtDate(tx.d)}</span>
+                          <span className="text-sm truncate flex-1" style={{ color: t.text }} title={tx.desc}>
+                            {tx.desc}
+                            {sources.length > 1 && <span className="text-[10px] ml-1.5 px-1.5 py-0.5 rounded" style={{ background: t.panelAlt, color: t.textMuted }}>{BUDGET_SOURCES[tx.src || "revolut"] || tx.src}</span>}
+                            {tx.manual && <span className="text-[10px] ml-1.5" style={{ color: t.textMuted }} title="Catégorie choisie à la main">✎</span>}
+                          </span>
+                          <span className="text-sm shrink-0 font-medium" style={{ color: tx.amt > 0 ? t.gain : t.text, ...NUM }}>
+                            {tx.amt > 0 ? "+" : ""}{fmtEURcents(tx.amt)}
+                          </span>
+                        </div>
+                        <select value={tx.cat} onChange={(e) => onSetCategory(tx, e.target.value)} className="rounded-lg px-2 py-1 text-xs md:w-48" style={select}>
+                          {BUDGET_CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.id}</option>)}
+                        </select>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+            {visible.length > limit && (
+              <button onClick={() => setLimit((l) => l + 300)} className="w-full mt-2 py-2 rounded-lg text-sm" style={{ background: t.panelAlt, color: t.text, border: `1px solid ${t.border}` }}>
+                Afficher plus ({visible.length - limit} restantes)
+              </button>
+            )}
+            {!visible.length && <p className="text-sm" style={{ color: t.textMuted }}>Aucun mouvement pour ces filtres.</p>}
+          </Panel>
+        </div>
+      );
+    }
+
     function PatrimoineApp() {
       const [themeName, setThemeName] = useState("dark");
       const t = THEMES[themeName];
@@ -3202,6 +3466,10 @@ Méthode de calcul de l'application :
           if (key && !x.manual && budgetKey(x.desc) === key) return { ...x, cat };
           return x;
         }));
+      };
+      const handleBulkCategory = (ids, cat) => {
+        const set = new Set(ids);
+        setBudgetTx((prev) => prev.map((x) => (set.has(x.id) ? { ...x, cat, manual: true } : x)));
       };
       const handleDeleteBudgetRule = (key) => setBudgetRules(({ [key]: _, ...rest }) => rest);
       const handleDeleteBudgetMonth = (p) => setBudgetTx((prev) => prev.filter((tx) => !tx.d.startsWith(p)));
@@ -3396,6 +3664,7 @@ Méthode de calcul de l'application :
         { id: "dashboard", label: "Tableau de bord", short: "Accueil", icon: LayoutDashboard },
         { id: "positions", label: "Positions", short: "Positions", icon: Briefcase },
         { id: "budget", label: "Budget", short: "Budget", icon: Receipt },
+        { id: "operations", label: "Opérations", short: "Opérations", icon: List },
         { id: "virements", label: "Virements", short: "Virements", icon: ArrowLeftRight },
         { id: "historique", label: "Historique", short: "Historique", icon: History },
       ];
@@ -3661,6 +3930,15 @@ Méthode de calcul de l'application :
                 />
               )}
 
+              {tab === "operations" && (
+                <OperationsTab
+                  transactions={budgetTx}
+                  onImport={handleBudgetImport}
+                  onSetCategory={handleBudgetCategory}
+                  onBulkCategory={handleBulkCategory}
+                />
+              )}
+
               {tab === "virements" && (
                 <Panel title={`Virements (${transfers.length})`}>
                   <TransfersTab
@@ -3694,7 +3972,7 @@ Méthode de calcul de l'application :
                 style={{ bottom: "calc(76px + env(safe-area-inset-bottom))", background: t.accent, color: t.onAccent, boxShadow: `0 8px 24px ${t.accent}66` }}>
                 <Plus size={24} />
               </button>
-              <nav className="fixed bottom-0 inset-x-0 z-40 grid grid-cols-5"
+              <nav className="fixed bottom-0 inset-x-0 z-40 grid grid-cols-6"
                 style={{ background: `${t.panel}f2`, backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", borderTop: `1px solid ${t.border}`, paddingBottom: "env(safe-area-inset-bottom)" }}>
                 {NAV_ITEMS.map((n) => {
                   const Icon = n.icon;
