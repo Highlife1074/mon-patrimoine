@@ -4343,15 +4343,14 @@ Méthode de calcul de l'application :
       if (!metrics || metrics.length < 2) return null;
       const fc = normForecast(raw);
       const { tauxMois, tauxAn } = tauxPlan(fc, rendementHisto(metrics));
-      const choix = metrics.slice(0, -1).map((m) => m.periode);
-      const dernier = metrics[metrics.length - 1].periode;
-      // Départ par défaut : dernier relevé de l'année précédente (suivi depuis le 1er janvier), sinon 12 mois avant
-      const parDefaut = [...choix].reverse().find((p) => p < `${dernier.slice(0, 4)}-01`) || choix[Math.max(0, choix.length - 12)];
-      const debut = choix.includes(fc.debutSuivi) ? fc.debutSuivi : parDefaut;
+      const choix = metrics.map((m) => m.periode);
+      // Départ : relevé à partir duquel le plan s'applique (enregistré une fois pour toutes), par défaut le dernier relevé.
+      // Ce mois-là, théorique = réel ; les relevés suivants font apparaître l'écart.
+      const debut = choix.includes(fc.debutSuivi) ? fc.debutSuivi : choix[choix.length - 1];
       const i0 = metrics.findIndex((m) => m.periode === debut);
       const deps = planDepenses(fc, months, limits, [moisCourant()]);
       let theo = metrics[i0].wealth;
-      const rows = [];
+      const rows = [{ periode: debut, depart: true, reel: theo, theo, ecartCumul: 0, attendu: theo, ecartMois: 0, epargnePrevue: 0, epargneReelle: 0, gainsPrevus: 0, gainsReels: 0 }];
       for (let i = i0 + 1; i < metrics.length; i++) {
         const prev = metrics[i - 1], m = metrics[i];
         // Mois sans relevé entre deux relevés : leur épargne prévue est comptée aussi
@@ -4594,9 +4593,8 @@ Méthode de calcul de l'application :
       // Courbe du patrimoine : relevés réels et trajectoire théorique du plan depuis le départ du suivi, puis projection.
       // La trajectoire théorique continue dans le futur : on voit si l'on est en avance ou en retard sur le plan.
       const chartPatri = (() => {
-        if (!suivi || !suivi.rows.length) return chartData;
-        const passe = [{ periode: suivi.debut, reel: Math.round(suivi.depart), theo: Math.round(suivi.depart) },
-          ...suivi.rows.map((r) => ({ periode: r.periode, reel: Math.round(r.reel), theo: Math.round(r.theo) }))];
+        if (!suivi || suivi.rows.length < 2) return chartData;
+        const passe = suivi.rows.map((r) => ({ periode: r.periode, reel: Math.round(r.reel), theo: Math.round(r.theo) }));
         const last = passe[passe.length - 1];
         last.treso = Math.round(depart); last.seule = Math.round(depart);
         let theo = suivi.dernier.theo, prevP = last.periode;
@@ -4668,9 +4666,9 @@ Méthode de calcul de l'application :
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 md:gap-5">
-            <Panel title="Patrimoine projeté" subtitle={suivi?.rows.length ? `Réel et théorique depuis ${monthLong(suivi.debut)}, puis projection jusqu'à ${monthLabel(finP)}` : `${libVue} · patrimoine total en fin de mois`}>
+            <Panel title="Patrimoine projeté" subtitle={suivi?.rows.length > 1 ? `Réel et théorique depuis ${monthLong(suivi.debut)}, puis projection jusqu'à ${monthLabel(finP)}` : `${libVue} · patrimoine total en fin de mois`}>
               <ChartLegend items={[
-                ...(suivi?.rows.length ? [{ label: "Réel", color: t.s4 }, { label: "Théorique (plan)", color: t.s2 }] : []),
+                ...(suivi?.rows.length > 1 ? [{ label: "Réel", color: t.s4 }, { label: "Théorique (plan)", color: t.s2 }] : []),
                 { label: totRend ? `Projection épargne + gains (${tauxAn.toFixed(1).replace(".", ",")} %)` : "Projection", color: t.s1 },
                 ...(totRend !== 0 ? [{ label: "Épargne seule", color: t.textMuted }] : []),
               ]} />
@@ -4682,8 +4680,8 @@ Méthode de calcul de l'application :
                   <Tooltip contentStyle={tooltipStyle(t)} labelFormatter={(p) => monthLong(p)} formatter={(v, k) => [fmtEUR(v), suiviLabel(k)]} />
                   <Area dataKey="treso" stroke={t.s1} strokeWidth={2} fill={t.s1} fillOpacity={0.12} isAnimationActive={false} connectNulls={false} />
                   {totRend !== 0 && <Area dataKey="seule" stroke={t.textMuted} strokeWidth={1.5} strokeDasharray="5 4" fill="none" isAnimationActive={false} />}
-                  {suivi?.rows.length > 0 && <Line dataKey="theo" stroke={t.s2} strokeWidth={1.5} strokeDasharray="4 3" dot={false} isAnimationActive={false} />}
-                  {suivi?.rows.length > 0 && <Line dataKey="reel" stroke={t.s4} strokeWidth={2.5} dot={{ r: 2.5, fill: t.s4 }} isAnimationActive={false} />}
+                  {suivi?.rows.length > 1 && <Line dataKey="theo" stroke={t.s2} strokeWidth={1.5} strokeDasharray="4 3" dot={false} isAnimationActive={false} />}
+                  {suivi?.rows.length > 1 && <Line dataKey="reel" stroke={t.s4} strokeWidth={2.5} dot={{ r: 2.5, fill: t.s4 }} isAnimationActive={false} />}
                 </ComposedChart>
               </ResponsiveContainer>
             </Panel>
@@ -4731,9 +4729,10 @@ Méthode de calcul de l'application :
                   ))}
                 </div>
               )}
-              {suivi.rows.length === 0 ? (
-                <p className="text-sm" style={{ color: t.textMuted }}>Aucun relevé de patrimoine après {monthLong(suivi.debut)} : l'écart apparaîtra au prochain point mensuel.</p>
-              ) : (
+              {suivi.rows.length === 1 && (
+                <p className="text-sm mb-2" style={{ color: t.textMuted }}>Le plan part de votre relevé de {monthLong(suivi.debut)} : théorique et réel sont identiques ce mois-ci. L'écart apparaîtra au prochain point mensuel.</p>
+              )}
+              {(
                 <div className="overflow-x-auto -mx-1 px-1">
                   <table className="w-full text-xs md:text-sm" style={{ ...NUM, borderCollapse: "collapse" }}>
                     <thead>
@@ -4746,11 +4745,11 @@ Méthode de calcul de l'application :
                     <tbody>
                       {[...suivi.rows].reverse().map((r) => (
                         <tr key={r.periode} style={{ borderTop: `1px solid ${t.border}` }}>
-                          <td className="py-1.5 px-2 text-left whitespace-nowrap" style={{ color: t.text }}>{monthLabel(r.periode)}</td>
-                          <td className={cell} style={{ color: t.textMuted }}>{signed(r.epargnePrevue)}</td>
-                          <td className={cell} style={{ color: t.text }}>{signed(r.epargneReelle)}</td>
-                          {suivi.tauxAn ? <td className={cell} style={{ color: t.textMuted }}>{signed(r.gainsPrevus)}</td> : null}
-                          <td className={cell} style={{ color: t.text }}>{signed(r.gainsReels)}</td>
+                          <td className="py-1.5 px-2 text-left whitespace-nowrap" style={{ color: t.text }}>{monthLabel(r.periode)}{r.depart ? <span className="text-[10px] ml-1" style={{ color: t.textMuted }}>départ</span> : null}</td>
+                          <td className={cell} style={{ color: t.textMuted }}>{r.depart ? "—" : signed(r.epargnePrevue)}</td>
+                          <td className={cell} style={{ color: t.text }}>{r.depart ? "—" : signed(r.epargneReelle)}</td>
+                          {suivi.tauxAn ? <td className={cell} style={{ color: t.textMuted }}>{r.depart ? "—" : signed(r.gainsPrevus)}</td> : null}
+                          <td className={cell} style={{ color: t.text }}>{r.depart ? "—" : signed(r.gainsReels)}</td>
                           <td className={cell} style={{ color: signColor(r.ecartMois), fontWeight: 600 }}>{signed(r.ecartMois)}</td>
                           <td className={cell} style={{ color: t.textMuted }}>{fmtEUR(r.theo)}</td>
                           <td className={cell} style={{ color: t.text }}>{fmtEUR(r.reel)}</td>
@@ -5305,6 +5304,11 @@ Méthode de calcul de l'application :
       const monthlyMetrics = useMemo(() => buildMonthlyMetrics(monthlyEff, allFlows), [monthlyEff, allFlows]);
       const yearlyMetrics = useMemo(() => buildYearlyMetrics(monthlyMetrics), [monthlyMetrics]);
       // Plan vs réel : recalculé à chaque relevé de patrimoine, modification du prévisionnel ou import de relevés bancaires
+      // Départ du suivi enregistré une fois (dernier relevé connu) : il ne glisse pas quand de nouveaux relevés arrivent
+      useEffect(() => {
+        if (!loaded || forecast.debutSuivi || !monthlyMetrics.length) return;
+        setForecast((f) => (f.debutSuivi ? f : { ...f, debutSuivi: monthlyMetrics[monthlyMetrics.length - 1].periode }));
+      }, [loaded, forecast.debutSuivi, monthlyMetrics]);
       const suiviPlan = useMemo(() => buildSuiviPlan(forecast, budgetMonths, budgetLimits, monthlyMetrics), [forecast, budgetMonths, budgetLimits, monthlyMetrics, catsVersion]);
       const categoryAlloc = useMemo(() => aggregatePositions(positions, "category"), [positions]);
       const sectorAlloc = useMemo(() => aggregateSectors(positions), [positions]);
