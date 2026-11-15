@@ -4331,8 +4331,29 @@ Méthode de calcul de l'application :
       return { mode, tauxAn, tauxMois: Math.pow(1 + tauxAn / 100, 1 / 12) - 1 };
     }
     // Épargne prévue d'un mois : revenus prévus − dépenses courantes − dépenses planifiées
+    // Revenus du plan regroupés par libellé (« Salaire » sur deux lignes = une ligne du tableau). Chaque groupe peut avoir
+    // des montants saisis mois par mois dans le plan (fc.revParMois[clé][mois]) qui remplacent celui des lignes ce mois-là.
+    const revKey = (l) => (l.label || "").trim().toLowerCase() || `__${l.id}`;
+    function revenusGroupes(fc) {
+      const m = new Map();
+      fc.revenus.forEach((l) => {
+        const key = revKey(l);
+        if (!m.has(key)) m.set(key, { key, label: (l.label || "").trim() || "Revenu sans nom", lignes: [] });
+        m.get(key).lignes.push(l);
+      });
+      // Montants saisis dans le tableau sans ligne correspondante (ex. « Salaire » saisi directement)
+      Object.keys(fc.revParMois || {}).forEach((key) => {
+        if (!m.has(key) && Object.keys(fc.revParMois[key] || {}).length) m.set(key, { key, label: key.charAt(0).toUpperCase() + key.slice(1), lignes: [] });
+      });
+      if (!m.size) m.set("salaire", { key: "salaire", label: "Salaire", lignes: [] });
+      return [...m.values()].map((g) => {
+        const ov = (fc.revParMois || {})[g.key] || {};
+        const val = (p) => (ov[p] !== undefined && ov[p] !== "" ? Number(ov[p]) || 0 : g.lignes.reduce((s, l) => s + montantLigne(l, p), 0));
+        return { ...g, parMois: ov, saisis: Object.keys(ov).length, val, label: g.lignes.length > 1 ? `${g.label} (${g.lignes.length} lignes)` : g.label };
+      });
+    }
     function fluxPlan(fc, depRows, p) {
-      const rev = fc.revenus.reduce((s, l) => s + montantLigne(l, p), 0);
+      const rev = revenusGroupes(fc).reduce((s, g) => s + g.val(p), 0);
       const dep = depRows.reduce((s, r) => s + r.val(p), 0) + fc.depenses.reduce((s, l) => s + montantLigne(l, p), 0);
       return { rev, dep, flux: rev - dep };
     }
@@ -4486,8 +4507,15 @@ Méthode de calcul de l'application :
       const toutCocher = (v) => set({ courantes: Object.fromEntries(depRecap.map((r) => [r.cat, { ...(fc.courantes[r.cat] || {}), inclus: v }])) });
 
       // --- Plan mois par mois ---
+      const revGroupes = revenusGroupes(fc);
+      // Case de revenu : vide = montant des lignes « Revenus prévus » ; une valeur remplace ce mois-là
+      const setCaseRev = (g, p, v) => {
+        const ov = { ...g.parMois };
+        if (v === "") delete ov[p]; else ov[p] = Number(v);
+        set({ revParMois: { ...(fc.revParMois || {}), [g.key]: ov } });
+      };
       const mensuel = periodes.map((p) => {
-        const rev = fc.revenus.map((l) => montantLigne(l, p));
+        const rev = revGroupes.map((g) => g.val(p));
         const dep = fc.depenses.map((l) => montantLigne(l, p));
         const cat = depAll.map((r) => r.val(p));
         const prevRev = rev.reduce((s, v) => s + v, 0);
@@ -4555,33 +4583,39 @@ Méthode de calcul de l'application :
           <td className={cell} style={{ color: t.text, fontWeight: 600 }}>{total === null ? "" : fmtEUR(total)}</td>
         </tr>
       );
-      // Poste de dépense : une case par mois, à remplir directement (vide = montant du récapitulatif en dessous)
-      const ligneCategorie = (r, i) => (
-        <tr key={r.cat} style={{ opacity: r.inclus || r.saisis ? 1 : 0.55 }}>
-          <td className="py-1 pr-3 text-left max-w-[180px] truncate" style={{ ...sticky, color: t.text }} title={`${r.cat}${r.inclus ? "" : " (non comptée)"}`}>
-            {r.cat}{r.freq === "an" ? <span className="text-[10px] ml-1" style={{ color: t.textMuted }}>an</span> : null}
-            {r.saisis > 0 && (
-              <button onClick={() => setCour(r.cat, { parMois: {} })} title="Effacer les montants saisis mois par mois" className="ml-1 align-middle" style={{ color: t.textMuted }}>
+      // Ligne éditable du plan : une case par mois (vide = montant automatique, affiché en gris)
+      const ligneSaisie = ({ key, label, title, faded, badge, parMois, saisis, auto, valCol, onSet, onReset }) => (
+        <tr key={key} style={{ opacity: faded ? 0.55 : 1 }}>
+          <td className="py-1 pr-3 text-left max-w-[180px] truncate" style={{ ...sticky, color: t.text }} title={title || label}>
+            {label}{badge ? <span className="text-[10px] ml-1" style={{ color: t.textMuted }}>{badge}</span> : null}
+            {saisis > 0 && (
+              <button onClick={onReset} title="Effacer les montants saisis mois par mois" className="ml-1 align-middle" style={{ color: t.textMuted }}>
                 <RefreshCw size={10} />
               </button>
             )}
           </td>
           {cols.map((c) => {
-            if (parAn) return <td key={c.p} className={cell} style={{ color: t.text }}>{v0(c.cat[i])}</td>;
-            const v = r.parMois[c.p];
+            if (parAn) return <td key={c.p} className={cell} style={{ color: t.text }}>{v0(valCol(c))}</td>;
+            const v = parMois[c.p];
             const manuel = v !== undefined && v !== "";
             return (
               <td key={c.p} className="py-0.5 px-0.5 text-right">
-                <input type="number" inputMode="decimal" min="0" value={manuel ? v : ""} placeholder={String(Math.round(r.inclus ? r.val(c.p) : 0))}
-                  onChange={(e) => setCase(r, c.p, e.target.value)} title={`${r.cat} · ${monthLong(c.p)}${manuel ? " (saisi)" : ""}`}
+                <input type="number" inputMode="decimal" min="0" value={manuel ? v : ""} placeholder={String(Math.round(auto(c.p)))}
+                  onChange={(e) => onSet(c.p, e.target.value)} title={`${label} · ${monthLong(c.p)}${manuel ? " (saisi)" : ""}`}
                   className="w-[4.5rem] rounded px-1.5 py-1 text-xs text-right"
                   style={{ ...NUM, background: manuel ? `${t.accent}14` : "transparent", color: t.text, border: `1px solid ${manuel ? t.accent : t.border}` }} />
               </td>
             );
           })}
-          <td className={cell} style={{ color: t.text, fontWeight: 600 }}>{fmtEUR(sum((c) => c.cat[i]))}</td>
+          <td className={cell} style={{ color: t.text, fontWeight: 600 }}>{fmtEUR(sum((c) => valCol(c)))}</td>
         </tr>
       );
+      // Poste de dépense : vide = montant du récapitulatif « Dépenses courantes » ; saisir coche la catégorie
+      const ligneCategorie = (r, i) => ligneSaisie({
+        key: r.cat, label: r.cat, title: `${r.cat}${r.inclus ? "" : " (non comptée)"}`, faded: !r.inclus && !r.saisis, badge: r.freq === "an" ? "an" : null,
+        parMois: r.parMois, saisis: r.saisis, auto: (p) => (r.inclus ? r.val(p) : 0), valCol: (c) => c.cat[i],
+        onSet: (p, v) => setCase(r, p, v), onReset: () => setCour(r.cat, { parMois: {} }),
+      });
       const Section = ({ label }) => (
         <tr><td colSpan={cols.length + 2} className="pt-3 pb-1 text-[11px] uppercase tracking-wide font-semibold text-left" style={{ ...sticky, color: t.textMuted }}>{label}</td></tr>
       );
@@ -4783,7 +4817,9 @@ Méthode de calcul de l'application :
                 </thead>
                 <tbody>
                   <Section label="Revenus" />
-                  {groupes(fc.revenus, "Revenu sans nom").map((g) => <Row key={g.key} label={g.label} vals={cols.map((c) => g.idx.reduce((s, i) => s + c.rev[i], 0))} total={sum((c) => g.idx.reduce((s, i) => s + c.rev[i], 0))} />)}
+                  {revGroupes.map((g, i) => ligneSaisie({ key: `rev-${g.key}`, label: g.label, parMois: g.parMois, saisis: g.saisis,
+                    auto: (p) => g.lignes.reduce((s, l) => s + montantLigne(l, p), 0), valCol: (c) => c.rev[i],
+                    onSet: (p, v) => setCaseRev(g, p, v), onReset: () => set({ revParMois: { ...(fc.revParMois || {}), [g.key]: {} } }) }))}
                   <Row label="Total revenus" vals={cols.map((c) => c.prevRev)} total={totRev} bold top />
                   <Section label="Dépenses" />
                   {depAll.map((r, i) => ligneCategorie(r, i))}
