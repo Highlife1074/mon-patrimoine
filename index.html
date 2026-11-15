@@ -45,7 +45,7 @@
       Wallet, TrendingUp, PiggyBank, Percent, Plus, Moon, Sun,
       ChevronDown, ChevronRight, ChevronLeft, X, ArrowUpRight, ArrowDownRight,
       Link2, Check, Clock, ArrowLeftRight, RefreshCw, Download, Upload, LogOut,
-      LayoutDashboard, Briefcase, History, MoreHorizontal, MessageCircle, Send, KeyRound, Receipt, List
+      LayoutDashboard, Briefcase, History, MoreHorizontal, MessageCircle, Send, KeyRound, Receipt, List, Target
     } from "lucide-react";
     
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
@@ -327,8 +327,9 @@
 
     // ================== BUDGET (relevés Revolut et LCL) ==================
     // Nature de chaque catégorie : revenu, dépense, épargne (vers les placements) ou neutre (entre mes comptes)
-    const BUDGET_CATEGORIES = [
+    const BASE_CATEGORIES = [
       { id: "Salaire", kind: "revenu" },
+      { id: "Paiement note de frais", kind: "revenu" },
       { id: "Autres revenus", kind: "revenu" },
       { id: "Logement & énergie", kind: "depense" },
       { id: "Courses", kind: "depense" },
@@ -344,11 +345,29 @@
       { id: "Frais bancaires", kind: "depense" },
       { id: "Retraits espèces", kind: "depense" },
       { id: "Famille & proches", kind: "depense" },
+      { id: "Note de frais", kind: "depense" },
       { id: "Autres dépenses", kind: "depense" },
       { id: "Épargne / placements", kind: "epargne" },
       { id: "Virement interne", kind: "neutre" },
     ];
+    // Liste vivante : catégories de base + catégories créées par l'utilisateur (insérées avant « Autres … » de leur type)
+    const BUDGET_CATEGORIES = [...BASE_CATEGORIES];
     const BUDGET_KIND = Object.fromEntries(BUDGET_CATEGORIES.map((c) => [c.id, c.kind]));
+    const CATEGORY_KINDS = [["depense", "Dépense"], ["revenu", "Revenu"], ["epargne", "Épargne / placement"], ["neutre", "Virement entre mes comptes"]];
+    function applyCustomCategories(custom) {
+      const list = [...BASE_CATEGORIES];
+      (custom || []).forEach((c) => {
+        if (!c?.id || list.some((x) => x.id === c.id)) return;
+        // Juste avant la catégorie « fourre-tout » de son type, sinon après la dernière de ce type
+        const autres = list.findIndex((x) => x.kind === c.kind && /^Autres /.test(x.id));
+        let at = autres;
+        if (at < 0) { at = list.map((x) => x.kind).lastIndexOf(c.kind) + 1; if (at === 0) at = list.length; }
+        list.splice(at, 0, { id: c.id, kind: c.kind, custom: true });
+      });
+      BUDGET_CATEGORIES.splice(0, BUDGET_CATEGORIES.length, ...list);
+      Object.keys(BUDGET_KIND).forEach((k) => delete BUDGET_KIND[k]);
+      list.forEach((c) => { BUDGET_KIND[c.id] = c.kind; });
+    }
     const budgetKind = (cat) => BUDGET_KIND[cat] || "depense";
 
     const BUDGET_KEYWORDS = [
@@ -414,7 +433,7 @@
     function categorizeTx(tx, rules) {
       // Signal fort dans le libellé détaillé du virement (fiche de paie, note de frais) : prime sur la règle apprise
       if (tx.amt > 0 && tx.detail) {
-        if (/expense note|exp notes?|note de frais/i.test(tx.detail)) return "Autres revenus";
+        if (/expense note|exp notes?|note de frais/i.test(tx.detail)) return "Paiement note de frais";
         if (/salary|salaire|\bpaie\b|payroll|bonus|leave compensation/i.test(tx.detail)) return "Salaire";
         // Société qui paie avec une référence « mois/année » (« RT 01/ 2026 », « 02.2026 ADDITIONAL ») : un salaire
         if (/\b(sa|sas|ltd|limited|joint ve\w*|constructions?|ae|ike)\b/i.test(tx.desc) && /\b(0?[1-9]|1[0-2])\s*[/.]\s*20\d{2}\b/.test(tx.detail)) return "Salaire";
@@ -3399,12 +3418,55 @@ Méthode de calcul de l'application :
       );
     }
 
-    function BudgetTab({ transactions, rules, limits = {}, onSetLimit, onImport, onSetCategory, onSetNote, onDeleteRule, onDeleteMonth }) {
+    function CategoriesEditor({ customCats, onAdd, onDelete, transactions, onClose }) {
+      const t = useTheme();
+      const [name, setName] = useState("");
+      const [kind, setKind] = useState("depense");
+      const [msg, setMsg] = useState("");
+      const input = { background: t.panel, color: t.text, border: `1px solid ${t.border}` };
+      const kindLabel = Object.fromEntries(CATEGORY_KINDS);
+      const add = () => {
+        if (onAdd(name, kind)) { setMsg(`« ${name.trim()} » ajoutée.`); setName(""); }
+        else setMsg(name.trim() ? "Cette catégorie existe déjà." : "Indiquez un nom.");
+      };
+      return (
+        <Panel title="Catégories" subtitle="Créez vos propres catégories. Le type décide où elles comptent : dépenses, revenus, placements, ou ni l'un ni l'autre (virement entre vos comptes)."
+          action={<button onClick={onClose} className="p-1 rounded-lg" style={{ color: t.textMuted }} title="Fermer"><X size={16} /></button>}>
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            <input value={name} onChange={(e) => { setName(e.target.value); setMsg(""); }} onKeyDown={(e) => e.key === "Enter" && add()} maxLength={40}
+              placeholder="Nom de la nouvelle catégorie" className="flex-1 min-w-[180px] rounded-lg px-3 py-1.5 text-sm" style={input} />
+            <select value={kind} onChange={(e) => setKind(e.target.value)} className="rounded-lg px-2 py-1.5 text-sm" style={input}>
+              {CATEGORY_KINDS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </select>
+            <button onClick={add} className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ background: t.accent, color: t.onAccent }}>Ajouter</button>
+          </div>
+          {msg && <p className="text-xs mb-2" style={{ color: t.textMuted }}>{msg}</p>}
+          <div className="space-y-1">
+            {customCats.length === 0 && <p className="text-xs" style={{ color: t.textMuted }}>Aucune catégorie personnelle pour l'instant.</p>}
+            {customCats.map((c) => {
+              const n = transactions.filter((x) => x.cat === c.id).length;
+              return (
+                <div key={c.id} className="flex items-center justify-between gap-3 text-sm py-1" style={{ borderBottom: `1px solid ${t.border}` }}>
+                  <span style={{ color: t.text }}>{c.id} <span className="text-xs" style={{ color: t.textMuted }}>· {kindLabel[c.kind]} · {n} opération{n > 1 ? "s" : ""}</span></span>
+                  <DeleteButton title={`Supprimer « ${c.id} » (ses opérations reprennent une catégorie automatique)`} onConfirm={() => onDelete(c.id)} />
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-[11px] mt-3" style={{ color: t.textMuted }}>
+            Catégories de base, non supprimables : {BASE_CATEGORIES.map((c) => c.id).join(", ")}.
+          </p>
+        </Panel>
+      );
+    }
+
+    function BudgetTab({ transactions, rules, limits = {}, onSetLimit, onImport, onSetCategory, onSetNote, onDeleteRule, onDeleteMonth, customCats = [], onAddCategory, onDeleteCategory, catsVersion = "" }) {
       const t = useTheme();
       const isMobile = useIsMobile();
-      const months = useMemo(() => buildBudgetMonths(transactions), [transactions]);
+      const months = useMemo(() => buildBudgetMonths(transactions), [transactions, catsVersion]);
       const [mode, setMode] = useState("mois");
       const [showLimits, setShowLimits] = useState(false);
+      const [showCats, setShowCats] = useState(false);
       const [periode, setPeriode] = useState(null);
       const [annee, setAnnee] = useState(null);
       const [filterCat, setFilterCat] = useState("all");
@@ -3508,9 +3570,14 @@ Méthode de calcul de l'application :
               style={{ background: showLimits ? t.panel : t.panelAlt, border: `1px solid ${t.border}`, color: t.text, fontWeight: showLimits ? 600 : 400 }}>
               Budgets
             </button>
+            <button onClick={() => setShowCats((v) => !v)} className="px-3 py-1.5 rounded-lg text-sm"
+              style={{ background: showCats ? t.panel : t.panelAlt, border: `1px solid ${t.border}`, color: t.text, fontWeight: showCats ? 600 : 400 }}>
+              Catégories
+            </button>
           </div>
 
           {showLimits && <BudgetLimitsEditor limits={limits} onSetLimit={onSetLimit} months={months} onClose={() => setShowLimits(false)} />}
+          {showCats && <CategoriesEditor customCats={customCats} onAdd={onAddCategory} onDelete={onDeleteCategory} transactions={transactions} onClose={() => setShowCats(false)} />}
 
           <div className="flex items-center justify-between gap-2">
             <button onClick={() => idx > 0 && goTo(navList[idx - 1])} disabled={idx <= 0} className="p-2 rounded-lg" style={{ color: idx > 0 ? t.text : t.border }}>
@@ -3730,7 +3797,7 @@ Méthode de calcul de l'application :
     const KIND_LABEL = { revenu: "Revenus", depense: "Dépenses", epargne: "Versements vers les placements", neutre: "Virements entre mes comptes" };
     const shortMonth = (p) => periodeDate(p).toLocaleDateString("fr-FR", { month: "short", year: "2-digit" });
 
-    function OperationsTab({ transactions, onImport, onSetCategory, onBulkCategory, onSetNote }) {
+    function OperationsTab({ transactions, onImport, onSetCategory, onBulkCategory, onSetNote, catsVersion = "" }) {
       const t = useTheme();
       const isMobile = useIsMobile();
       const [period, setPeriod] = useState("all");
@@ -3783,7 +3850,7 @@ Méthode de calcul de l'application :
           r.byMonth[p] = (r.byMonth[p] || 0) + tx.amt;
         });
         return byCat;
-      }, [scoped]);
+      }, [scoped, catsVersion]);
       const groups = ["depense", "revenu", "epargne", "neutre"].map((kind) => {
         const rows = BUDGET_CATEGORIES.filter((c) => c.kind === kind && summary[c.id]).map((c) => summary[c.id]);
         // Dépenses et versements en positif, revenus en positif : on affiche ce qui « sort » ou « entre »
@@ -4035,6 +4102,183 @@ Méthode de calcul de l'application :
       );
     }
 
+    // ================== ONGLET PRÉVISIONNEL ==================
+    const annualise = (montant, periode) => (periode === "an" ? montant : montant * 12);
+    const newId = () => Math.random().toString(36).slice(2, 9);
+
+    function ForecastTab({ months, limits, forecast, onChange }) {
+      const t = useTheme();
+      const isMobile = useIsMobile();
+      const fc = { revenus: [], inclureMoyennes: true, ...(forecast || {}) };
+      const set = (patch) => onChange({ ...fc, ...patch });
+      const years = [...new Set([...months.map((m) => m.periode.slice(0, 4)), moisCourant().slice(0, 4)])].sort();
+      const [annee, setAnnee] = useState(moisCourant().slice(0, 4));
+      const cur = moisCourant();
+      const input = { background: t.panel, color: t.text, border: `1px solid ${t.border}` };
+
+      // Moyennes sur les 12 derniers mois terminés (servent au pré-remplissage et aux catégories sans budget)
+      const last12 = months.filter((m) => m.periode < cur).slice(-12);
+      const avg = (fn) => (last12.length ? last12.reduce((s, m) => s + fn(m), 0) / last12.length : 0);
+
+      // --- Revenus prévus ---
+      const revenusAn = fc.revenus.reduce((s, r) => s + annualise(Number(r.montant) || 0, r.periode), 0);
+      const updRev = (id, patch) => set({ revenus: fc.revenus.map((r) => (r.id === id ? { ...r, ...patch } : r)) });
+      const prefill = () => {
+        const lignes = [];
+        // Seuls les salaires sont pré-remplis : les « autres revenus » mêlent des rentrées exceptionnelles
+        // (dividendes, indemnités, remboursements) qui fausseraient la projection.
+        const sal = avg((m) => m.salaire);
+        if (sal >= 1) lignes.push({ id: newId(), label: "Salaires (moyenne des 12 derniers mois)", montant: Math.round(sal), periode: "mois" });
+        set({ revenus: [...fc.revenus, ...lignes] });
+      };
+
+      // --- Dépenses prévues : budgets, puis moyenne pour les catégories sans budget ---
+      const depRows = BUDGET_CATEGORIES.filter((c) => c.kind === "depense").map((c) => {
+        const L = getLimit(limits, c.id);
+        const moy = avg((m) => depenseCat(m, c.id)) * 12;
+        if (L) return { cat: c.id, an: L.annual ? L.amount : L.amount * 12, source: L.annual ? "budget annuel" : `budget ${fmtEUR(L.amount)}/mois`, moy };
+        if (fc.inclureMoyennes && moy >= 1) return { cat: c.id, an: moy, source: "moyenne des relevés", moy };
+        return { cat: c.id, an: 0, source: "non prévu", moy };
+      }).filter((r) => r.an > 0 || r.moy >= 1).sort((a, b) => b.an - a.an);
+      const depensesAn = depRows.reduce((s, r) => s + r.an, 0);
+      const epargneAn = revenusAn - depensesAn;
+      const taux = revenusAn > 0 ? epargneAn / revenusAn : null;
+
+      // --- Réel de l'année choisie comparé au prévu (au prorata des mois écoulés) ---
+      const yMonths = months.filter((m) => m.periode.startsWith(annee) && m.periode < cur);
+      const n = yMonths.length;
+      const reelRev = yMonths.reduce((s, m) => s + m.revenus, 0);
+      const reelDep = yMonths.reduce((s, m) => s + m.depenses, 0);
+      const prevRev = (revenusAn / 12) * n, prevDep = (depensesAn / 12) * n;
+      const restant = annee < cur.slice(0, 4) ? 0 : annee > cur.slice(0, 4) ? 12 : 12 - n;
+      const projRev = reelRev + (revenusAn / 12) * restant;
+      const projDep = reelDep + (depensesAn / 12) * restant;
+      // Courbe : écart cumulé (revenus − dépenses) réel et prévu, mois par mois
+      const courbe = Array.from({ length: 12 }, (_, i) => {
+        const p = `${annee}-${String(i + 1).padStart(2, "0")}`;
+        return { periode: p, prevu: Math.round((epargneAn / 12) * (i + 1)) };
+      });
+      let cumul = 0;
+      courbe.forEach((pt) => {
+        const m = yMonths.find((x) => x.periode === pt.periode);
+        if (m) { cumul += m.solde; pt.reel = Math.round(cumul); }
+      });
+
+      const ecart = (reel, prevu, sensDepense) => {
+        const d = reel - prevu;
+        const bon = sensDepense ? d <= 0 : d >= 0;
+        return <span style={{ color: bon ? t.gain : t.loss, ...NUM }}>{d >= 0 ? "+" : "−"}{fmtEUR(Math.abs(d))}</span>;
+      };
+
+      return (
+        <div className="space-y-3 md:space-y-5">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+            <KPICard icon={Briefcase} label="Revenus estimés / an" value={fmtEUR(revenusAn)} sub={`${fmtEUR(revenusAn / 12)} / mois`} />
+            <KPICard icon={ArrowDownRight} label="Dépenses prévues / an" value={fmtEUR(depensesAn)} sub={`${fmtEUR(depensesAn / 12)} / mois`} />
+            <KPICard icon={PiggyBank} label="Épargne possible / an" value={signed(epargneAn)} tone={epargneAn >= 0 ? "up" : "down"}
+              sub={taux !== null ? `${Math.round(taux * 100)} % des revenus · ${fmtEUR(epargneAn / 12)} / mois` : "Saisissez vos revenus"} />
+            <KPICard icon={TrendingUp} label={`Projection fin ${annee}`} value={signed(projRev - projDep)} tone={projRev - projDep >= 0 ? "up" : "down"}
+              sub={n ? `${n} mois réels + ${restant} mois prévus` : "Prévu seul (aucun mois terminé)"} />
+          </div>
+
+          <Panel title="Revenus estimés" subtitle="Salaires, allocations (CAF)… par mois ; primes, bonus, 13e mois par an. Le pré-remplissage ne reprend que vos salaires moyens."
+            action={<button onClick={prefill} className="text-xs px-2.5 py-1 rounded-lg shrink-0" style={{ border: `1px solid ${t.border}`, color: t.text, background: t.panelAlt }}>Pré-remplir avec mes relevés</button>}>
+            <div className="space-y-2">
+              {fc.revenus.length === 0 && <p className="text-sm" style={{ color: t.textMuted }}>Aucun revenu saisi. Ajoutez une ligne ou pré-remplissez avec la moyenne de vos relevés.</p>}
+              {fc.revenus.map((r) => (
+                <div key={r.id} className="flex flex-wrap items-center gap-2">
+                  <input value={r.label} onChange={(e) => updRev(r.id, { label: e.target.value })} placeholder="Ex. : salaire Philippe"
+                    className="flex-1 min-w-[160px] rounded-lg px-3 py-1.5 text-sm" style={input} />
+                  <input type="number" inputMode="decimal" min="0" value={r.montant} onChange={(e) => updRev(r.id, { montant: e.target.value === "" ? "" : Number(e.target.value) })}
+                    className="w-28 rounded-lg px-2 py-1.5 text-sm text-right" style={{ ...input, ...NUM }} />
+                  <select value={r.periode} onChange={(e) => updRev(r.id, { periode: e.target.value })} className="rounded-lg px-1.5 py-1.5 text-xs" style={input}>
+                    <option value="mois">€ / mois</option>
+                    <option value="an">€ / an</option>
+                  </select>
+                  <span className="text-xs w-24 text-right" style={{ color: t.textMuted, ...NUM }}>{fmtEUR(annualise(Number(r.montant) || 0, r.periode))}/an</span>
+                  <button onClick={() => set({ revenus: fc.revenus.filter((x) => x.id !== r.id) })} title="Supprimer" className="p-1 rounded" style={{ color: t.textMuted }}><X size={14} /></button>
+                </div>
+              ))}
+              <button onClick={() => set({ revenus: [...fc.revenus, { id: newId(), label: "", montant: "", periode: "mois" }] })}
+                className="text-sm px-3 py-1.5 rounded-lg flex items-center gap-1.5" style={{ background: t.accent, color: t.onAccent }}>
+                <Plus size={14} /> Ajouter un revenu
+              </button>
+            </div>
+          </Panel>
+
+          <Panel title="Dépenses prévues" subtitle="Vos budgets (onglet Budget → Budgets), ramenés à l'année"
+            action={
+              <label className="flex items-center gap-1.5 text-xs shrink-0 cursor-pointer" style={{ color: t.textMuted }}>
+                <input type="checkbox" checked={fc.inclureMoyennes} onChange={(e) => set({ inclureMoyennes: e.target.checked })} />
+                {isMobile ? "Sans budget : moyenne" : "Catégories sans budget : compter leur moyenne"}
+              </label>
+            }>
+            <div className="space-y-1">
+              {depRows.map((r) => (
+                <div key={r.cat} className="flex items-center justify-between gap-3 text-sm py-1" style={{ borderBottom: `1px solid ${t.border}` }}>
+                  <span style={{ color: r.an ? t.text : t.textMuted }}>{r.cat} <span className="text-xs" style={{ color: t.textMuted }}>· {r.source}</span></span>
+                  <span className="shrink-0 text-right" style={{ ...NUM, color: r.an ? t.text : t.textMuted }}>
+                    {fmtEUR(r.an)}/an
+                    {!isMobile && r.source !== "moyenne des relevés" && r.moy >= 1 && <span className="text-xs" style={{ color: t.textMuted }}> · réel moyen {fmtEUR(r.moy)}/an</span>}
+                  </span>
+                </div>
+              ))}
+              <div className="flex justify-between text-sm font-semibold pt-2" style={{ color: t.text, ...NUM }}>
+                <span>Total</span><span>{fmtEUR(depensesAn)}/an · {fmtEUR(depensesAn / 12)}/mois</span>
+              </div>
+            </div>
+          </Panel>
+
+          <Panel title={`Prévu et réel — ${annee}`} subtitle={n ? `Comparaison sur les ${n} mois terminés de ${annee}` : "Aucun mois terminé pour cette année"}
+            action={
+              <select value={annee} onChange={(e) => setAnnee(e.target.value)} className="rounded-lg px-2 py-1.5 text-sm shrink-0" style={input}>
+                {years.map((y) => <option key={y} value={y}>{y}</option>)}
+              </select>
+            }>
+            {n > 0 && (
+              <div className="overflow-x-auto mb-4">
+                <table className="w-full text-sm" style={{ ...NUM, borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ color: t.textMuted }} className="text-xs">
+                      <th className="text-left font-medium py-1.5">Sur {n} mois</th>
+                      <th className="text-right font-medium py-1.5 px-2">Prévu</th>
+                      <th className="text-right font-medium py-1.5 px-2">Réel</th>
+                      <th className="text-right font-medium py-1.5 px-2">Écart</th>
+                      {!isMobile && <th className="text-right font-medium py-1.5 pl-2">Projection fin d'année</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[["Revenus", prevRev, reelRev, false, projRev], ["Dépenses", prevDep, reelDep, true, projDep], ["Épargne (revenus − dépenses)", prevRev - prevDep, reelRev - reelDep, false, projRev - projDep]].map(([l, p, r, dep, proj]) => (
+                      <tr key={l} style={{ borderTop: `1px solid ${t.border}` }}>
+                        <td className="py-1.5" style={{ color: t.text }}>{l}</td>
+                        <td className="py-1.5 px-2 text-right" style={{ color: t.textMuted }}>{fmtEUR(p)}</td>
+                        <td className="py-1.5 px-2 text-right" style={{ color: t.text }}>{fmtEUR(r)}</td>
+                        <td className="py-1.5 px-2 text-right">{ecart(r, p, dep)}</td>
+                        {!isMobile && <td className="py-1.5 pl-2 text-right" style={{ color: t.text }}>{fmtEUR(proj)}</td>}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <ChartLegend items={[{ label: "Épargne cumulée prévue", color: t.textMuted }, { label: "Épargne cumulée réelle", color: t.s1 }]} />
+            <ResponsiveContainer width="100%" height={isMobile ? 200 : 260}>
+              <LineChart data={courbe} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                <CartesianGrid stroke={t.border} vertical={false} />
+                <XAxis dataKey="periode" tickFormatter={monthLabel} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} minTickGap={12} />
+                <YAxis tickFormatter={(v) => `${Math.round(v / 1000)}k`} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} width={44} />
+                <ReferenceLine y={0} stroke={t.textMuted} strokeOpacity={0.6} />
+                <Tooltip contentStyle={tooltipStyle(t)} labelFormatter={(p) => monthLong(p)}
+                  formatter={(v, k) => [signed(v), k === "prevu" ? "Prévu (cumul)" : "Réel (cumul)"]} />
+                <Line dataKey="prevu" stroke={t.textMuted} strokeWidth={2} strokeDasharray="5 4" dot={false} isAnimationActive={false} />
+                <Line dataKey="reel" stroke={t.s1} strokeWidth={2} dot={{ r: 3, fill: t.s1, stroke: t.panel, strokeWidth: 2 }} connectNulls={false} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </Panel>
+        </div>
+      );
+    }
+
     function PatrimoineApp() {
       const [themeName, setThemeName] = useState("dark");
       const t = THEMES[themeName];
@@ -4049,6 +4293,10 @@ Méthode de calcul de l'application :
       const [budgetTx, setBudgetTx] = useState([]);
       const [budgetRules, setBudgetRules] = useState({});
       const [budgetLimits, setBudgetLimits] = useState({});
+      const [customCats, setCustomCats] = useState([]);
+      const [forecast, setForecast] = useState({ revenus: [], inclureMoyennes: true });
+      // Les catégories créées par l'utilisateur rejoignent la liste partagée avant tout calcul
+      applyCustomCategories(customCats);
       const [monthlyModalOpen, setMonthlyModalOpen] = useState(false);
       const [monthlyModalKey, setMonthlyModalKey] = useState(0);
       const [tab, setTab] = useState("dashboard");
@@ -4092,6 +4340,10 @@ Méthode de calcul de l'application :
                 setBudgetTx(saved.budget.tx || []);
                 setBudgetRules(saved.budget.rules || {});
                 setBudgetLimits(saved.budget.limits || {});
+                if (saved.budget.forecast) setForecast(saved.budget.forecast);
+                if (saved.budget.categories) { applyCustomCategories(saved.budget.categories); setCustomCats(saved.budget.categories); }
+                // Remboursements de notes de frais classés avant la création de leur catégorie
+                setBudgetTx((prev) => prev.map((x) => (!x.manual && x.cat === "Autres revenus" && x.amt > 0 && /expense note|exp notes?|note de frais/i.test(x.detail || "") ? { ...x, cat: "Paiement note de frais" } : x)));
               }
             }
           } catch (e) {
@@ -4114,7 +4366,8 @@ Méthode de calcul de l'application :
               transfers,
               recurringTransfers,
               // Budget (opérations bancaires + catégories apprises) : dans le même document, seul autorisé en écriture
-              budget: { tx: budgetTx, rules: budgetRules, limits: budgetLimits },
+              // Montants vides ("") gardés tels quels : pas de valeur undefined pour Firestore
+              budget: { tx: budgetTx, rules: budgetRules, limits: budgetLimits, categories: customCats, forecast },
               seedVersion: SEED_VERSION,
               derniereMiseAJour: new Date().toISOString()
             };
@@ -4132,7 +4385,7 @@ Méthode de calcul de l'application :
           }
         }, 800); 
         return () => clearTimeout(delai);
-      }, [positions, monthly, weeklyArchive, transfers, recurringTransfers, budgetTx, budgetRules, budgetLimits, loaded]);
+      }, [positions, monthly, weeklyArchive, transfers, recurringTransfers, budgetTx, budgetRules, budgetLimits, customCats, forecast, loaded]);
 
       const handleBudgetImport = async (files) => {
         const transactions = [];
@@ -4246,7 +4499,28 @@ Méthode de calcul de l'application :
         setBudgetTx((prev) => prev.map((x) => (!x.manual && budgetKey(x.desc) === key ? { ...x, cat: categorizeTx(x, rest) } : x)));
       };
       const handleDeleteBudgetMonth = (p) => setBudgetTx((prev) => prev.filter((tx) => !tx.d.startsWith(p)));
-      const budgetMonths = useMemo(() => buildBudgetMonths(budgetTx), [budgetTx]);
+      const budgetMonths = useMemo(() => buildBudgetMonths(budgetTx), [budgetTx, customCats]);
+      const catsVersion = customCats.map((c) => `${c.id}:${c.kind}`).join("|");
+      const handleAddCategory = (id, kind) => {
+        const name = String(id || "").trim();
+        if (!name || BUDGET_CATEGORIES.some((c) => c.id.toLowerCase() === name.toLowerCase())) return false;
+        setCustomCats((l) => [...l, { id: name, kind }]);
+        return true;
+      };
+      // Supprimer une catégorie créée : ses opérations reprennent une catégorie automatique, ses règles et son budget disparaissent
+      const handleDeleteCategory = (id) => {
+        const reste = customCats.filter((c) => c.id !== id);
+        applyCustomCategories(reste);
+        const rules = Object.fromEntries(Object.entries(budgetRules).filter(([, c]) => c !== id));
+        setCustomCats(reste);
+        setBudgetRules(rules);
+        setBudgetLimits(({ [id]: _, ...l }) => l);
+        setBudgetTx((prev) => prev.map((x) => {
+          if (x.cat !== id) return x;
+          const { manual, ...rest } = x;
+          return { ...rest, cat: categorizeTx(rest, rules) };
+        }));
+      };
 
       const handleReset = () => {
         setPositions(stockPositions);
@@ -4257,7 +4531,7 @@ Méthode de calcul de l'application :
       };
 
       const handleExport = () => {
-        const payload = { positions, monthly, weekly: weeklyArchive, transfers, recurringTransfers, budget: { transactions: budgetTx, rules: budgetRules, limits: budgetLimits }, seedVersion: SEED_VERSION, exportedAt: new Date().toISOString() };
+        const payload = { positions, monthly, weekly: weeklyArchive, transfers, recurringTransfers, budget: { transactions: budgetTx, rules: budgetRules, limits: budgetLimits, categories: customCats, forecast }, seedVersion: SEED_VERSION, exportedAt: new Date().toISOString() };
         const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -4281,6 +4555,8 @@ Méthode de calcul de l'application :
           if (data.budget?.transactions) setBudgetTx(data.budget.transactions);
           if (data.budget?.rules) setBudgetRules(data.budget.rules);
           if (data.budget?.limits) setBudgetLimits(data.budget.limits);
+          if (data.budget?.forecast) setForecast(data.budget.forecast);
+          if (data.budget?.categories) { applyCustomCategories(data.budget.categories); setCustomCats(data.budget.categories); }
         } catch (e) {
           alert("Fichier de sauvegarde illisible");
         }
@@ -4439,6 +4715,7 @@ Méthode de calcul de l'application :
         { id: "positions", label: "Positions", short: "Positions", icon: Briefcase },
         { id: "budget", label: "Budget", short: "Budget", icon: Receipt },
         { id: "operations", label: "Opérations", short: "Opérations", icon: List },
+        { id: "previsionnel", label: "Prévisionnel", short: "Prévision", icon: Target },
         { id: "virements", label: "Virements", short: "Virements", icon: ArrowLeftRight },
         { id: "historique", label: "Historique", short: "Historique", icon: History },
       ];
@@ -4701,6 +4978,10 @@ Méthode de calcul de l'application :
 
               {tab === "budget" && (
                 <BudgetTab
+                  catsVersion={catsVersion}
+                  customCats={customCats}
+                  onAddCategory={handleAddCategory}
+                  onDeleteCategory={handleDeleteCategory}
                   transactions={budgetTx}
                   rules={budgetRules}
                   limits={budgetLimits}
@@ -4713,8 +4994,13 @@ Méthode de calcul de l'application :
                 />
               )}
 
+              {tab === "previsionnel" && (
+                <ForecastTab months={budgetMonths} limits={budgetLimits} forecast={forecast} onChange={setForecast} />
+              )}
+
               {tab === "operations" && (
                 <OperationsTab
+                  catsVersion={catsVersion}
                   transactions={budgetTx}
                   onImport={handleBudgetImport}
                   onSetCategory={handleBudgetCategory}
@@ -4756,13 +5042,13 @@ Méthode de calcul de l'application :
                 style={{ bottom: "calc(76px + env(safe-area-inset-bottom))", background: t.accent, color: t.onAccent, boxShadow: `0 8px 24px ${t.accent}66` }}>
                 <Plus size={24} />
               </button>
-              <nav className="fixed bottom-0 inset-x-0 z-40 grid grid-cols-6"
+              <nav className="fixed bottom-0 inset-x-0 z-40 grid grid-cols-7"
                 style={{ background: `${t.panel}f2`, backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", borderTop: `1px solid ${t.border}`, paddingBottom: "env(safe-area-inset-bottom)" }}>
                 {NAV_ITEMS.map((n) => {
                   const Icon = n.icon;
                   const active = tab === n.id;
                   return (
-                    <button key={n.id} onClick={() => goTab(n.id)} className="flex flex-col items-center gap-1 pt-2.5 pb-2 text-[11px]"
+                    <button key={n.id} onClick={() => goTab(n.id)} className="flex flex-col items-center gap-1 pt-2.5 pb-2 text-[10px] min-w-0"
                       style={{ color: active ? t.accent : t.textMuted, fontWeight: active ? 600 : 400 }}>
                       <span className="relative flex items-center justify-center w-12 h-7 rounded-full" style={{ background: active ? `${t.accent}1f` : "transparent" }}>
                         <Icon size={19} />
@@ -4770,7 +5056,7 @@ Méthode de calcul de l'application :
                           <span className="absolute -top-0.5 right-1.5 w-2 h-2 rounded-full" style={{ background: t.warning }} />
                         )}
                       </span>
-                      {n.short}
+                      <span className="truncate max-w-full px-0.5">{n.short}</span>
                     </button>
                   );
                 })}
