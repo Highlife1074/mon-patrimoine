@@ -4195,7 +4195,7 @@ Méthode de calcul de l'application :
 
     const HORIZONS = [12, 24, 36, 60];
 
-    function ForecastTab({ months, limits, forecast, onChange, releve, onSetLimit }) {
+    function ForecastTab({ months, limits, forecast, onChange, releve, onSetLimit, metrics = [] }) {
       const t = useTheme();
       const isMobile = useIsMobile();
       const raw = forecast || {};
@@ -4289,9 +4289,29 @@ Méthode de calcul de l'application :
       // Point de départ : TOUT le patrimoine du dernier relevé. Chaque mois il reçoit l'épargne du mois
       // (revenus − dépenses) et, si un rendement est indiqué, le rendement mensuel équivalent sur le patrimoine du début de mois.
       const depart = releve ? Number(releve.totalWealth) || 0 : 0;
-      const tauxMois = Math.pow(1 + (Number(fc.rendement) || 0) / 100, 1 / 12) - 1;
-      let treso = depart;
-      mensuel.forEach((c) => { c.rend = treso * tauxMois; treso += c.rend + c.flux; c.treso = treso; c.gain = treso - depart; });
+      // Rendement historique : gain sur placements de chaque année / patrimoine en début d'année, ramené à 12 mois
+      // pour les années incomplètes (≥ 3 mois), puis moyenne des années
+      const histo = (() => {
+        const parAn = new Map();
+        metrics.forEach((m, i) => {
+          if (i === 0) return;
+          const y = m.periode.slice(0, 4);
+          if (!parAn.has(y)) parAn.set(y, { annee: y, debut: metrics[i - 1].wealth, gain: 0, n: 0 });
+          const a = parAn.get(y); a.gain += m.gain; a.n++;
+        });
+        const ans = [...parAn.values()].filter((a) => a.n >= 3 && a.debut > 0)
+          .map((a) => ({ ...a, pct: (Math.pow(1 + a.gain / a.debut, 12 / a.n) - 1) * 100 }));
+        return { ans, moyenne: ans.length ? ans.reduce((s, a) => s + a.pct, 0) / ans.length : 0 };
+      })();
+      // Mode : épargne seule, épargne + rendement historique moyen, ou épargne + rendement personnalisé
+      const mode = fc.modeRendement || (Number(fc.rendement) ? "perso" : "aucun");
+      const tauxAn = mode === "historique" ? histo.moyenne : mode === "perso" ? Number(fc.rendement) || 0 : 0;
+      const tauxMois = Math.pow(1 + tauxAn / 100, 1 / 12) - 1;
+      let treso = depart, seule = depart;
+      mensuel.forEach((c) => {
+        c.rend = treso * tauxMois; treso += c.rend + c.flux; c.treso = treso; c.gain = treso - depart;
+        seule += c.flux; c.seule = seule;
+      });
       // Tableau par année si demandé : colonnes regroupées (années incomplètes comprises)
       const cols = !parAn ? mensuel : Object.values(mensuel.reduce((acc, c) => {
         const y = c.p.slice(0, 4);
@@ -4344,8 +4364,8 @@ Méthode de calcul de l'application :
       );
 
       const chartData = [
-        { periode: moisReleve && moisReleve < cur ? moisReleve : addMois(cur, -1), treso: Math.round(depart), gain: 0 },
-        ...mensuel.map((c) => ({ periode: c.p, epargne: Math.round(c.flux), treso: Math.round(c.treso), gain: Math.round(c.gain) })),
+        { periode: moisReleve && moisReleve < cur ? moisReleve : addMois(cur, -1), treso: Math.round(depart), seule: Math.round(depart), gain: 0 },
+        ...mensuel.map((c) => ({ periode: c.p, epargne: Math.round(c.flux), treso: Math.round(c.treso), seule: Math.round(c.seule), gain: Math.round(c.gain) })),
       ];
       const chip = (on) => ({ border: `1px solid ${on ? t.accent : t.border}`, color: on ? t.accent : t.text, background: on ? `${t.accent}1f` : t.panelAlt });
 
@@ -4363,12 +4383,28 @@ Méthode de calcul de l'application :
                 ou jusqu'au <DateField value={fc.finVue} onChange={(v) => set({ finVue: v })} style={{ ...input, ...(finChoisie ? { borderColor: t.accent } : {}) }} />
               </label>
             </div>
-            <label className="flex items-center gap-2 text-sm" style={{ color: t.textMuted }} title="Rendement annuel moyen appliqué à tout le patrimoine (placements, immobilier, liquidités confondus). Vide = 0 %.">
-              Rendement estimé
-              <input type="number" inputMode="decimal" step="0.5" value={fc.rendement} onChange={(e) => set({ rendement: e.target.value === "" ? "" : Number(e.target.value) })}
-                placeholder="0" className="w-16 rounded-lg px-2 py-1.5 text-sm text-right" style={{ ...input, ...NUM }} />
-              % / an
-            </label>
+          </div>
+
+          <div className="rounded-2xl p-3 md:p-4 space-y-2" style={{ background: t.panel, border: `1px solid ${t.border}` }}>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-sm mr-1" style={{ color: t.textMuted }}>Estimation</span>
+              <button onClick={() => set({ modeRendement: "aucun" })} className="text-xs px-2.5 py-1 rounded-lg" style={chip(mode === "aucun")}>Épargne seule</button>
+              <button onClick={() => set({ modeRendement: "historique" })} disabled={!histo.ans.length} className="text-xs px-2.5 py-1 rounded-lg" style={{ ...chip(mode === "historique"), opacity: histo.ans.length ? 1 : 0.5 }}>
+                + gains au rendement moyen passé{histo.ans.length ? ` (${histo.moyenne.toFixed(1).replace(".", ",")} %)` : ""}
+              </button>
+              <button onClick={() => set({ modeRendement: "perso" })} className="text-xs px-2.5 py-1 rounded-lg" style={chip(mode === "perso")}>+ gains à un rendement choisi</button>
+              {mode === "perso" && (
+                <label className="flex items-center gap-1.5 text-xs" style={{ color: t.textMuted }}>
+                  <input type="number" inputMode="decimal" step="0.5" value={fc.rendement} onChange={(e) => set({ rendement: e.target.value === "" ? "" : Number(e.target.value) })}
+                    placeholder="0" className="w-16 rounded-lg px-2 py-1 text-sm text-right" style={{ ...input, ...NUM }} /> % / an
+                </label>
+              )}
+            </div>
+            <p className="text-[11px]" style={{ color: t.textMuted, ...NUM }}>
+              {mode === "aucun" ? "Le patrimoine n'évolue qu'avec l'épargne (revenus − dépenses), sans aucun gain de placement."
+                : `Rendement de ${tauxAn.toFixed(1).replace(".", ",")} %/an appliqué chaque mois à tout le patrimoine, en plus de l'épargne.`}
+              {histo.ans.length > 0 && ` Rendements passés (gain sur placements / patrimoine en début d'année) : ${histo.ans.map((a) => `${a.annee} ${a.pct.toFixed(1).replace(".", ",")} %${a.n < 12 ? ` (${a.n} mois, annualisé)` : ""}`).join(" · ")}.`}
+            </p>
           </div>
 
           <div className="rounded-2xl p-3 md:p-4 text-sm flex flex-wrap items-baseline gap-x-2 gap-y-1" style={{ background: t.panel, border: `1px solid ${releveAncien ? t.warning : t.border}`, color: t.textMuted }}>
@@ -4387,18 +4423,20 @@ Méthode de calcul de l'application :
             <KPICard icon={PiggyBank} label="Épargne prévue" value={signed(totRev - totDep)} tone={totRev - totDep >= 0 ? "up" : "down"}
               sub={totRev > 0 ? `${Math.round(((totRev - totDep) / totRev) * 100)} % des revenus` : "Saisissez vos revenus"} />
             <KPICard icon={TrendingUp} label={`Patrimoine fin ${monthLabel(finP)}`} value={fmtEUR(treso)} tone={gainTotal >= 0 ? "up" : "down"}
-              sub={`Gain ${signed(gainTotal)}${depart ? ` (${gainTotal >= 0 ? "+" : ""}${Math.round((gainTotal / depart) * 1000) / 10} %)` : ""}${totRend ? ` · dont rendement ${signed(totRend)}` : ""}`} />
+              sub={`Gain ${signed(gainTotal)}${depart ? ` (${gainTotal >= 0 ? "+" : ""}${Math.round((gainTotal / depart) * 1000) / 10} %)` : ""}${totRend ? ` · dont placements ${signed(totRend)} · épargne seule : ${fmtEUR(seule)}` : ""}`} />
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 md:gap-5">
             <Panel title="Patrimoine projeté" subtitle={`${libVue} · patrimoine total en fin de mois`}>
+              {totRend !== 0 && <ChartLegend items={[{ label: `Épargne + gains (${tauxAn.toFixed(1).replace(".", ",")} %)`, color: t.s1 }, { label: "Épargne seule", color: t.textMuted }]} />}
               <ResponsiveContainer width="100%" height={isMobile ? 200 : 260}>
                 <AreaChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                   <CartesianGrid stroke={t.border} vertical={false} />
                   <XAxis dataKey="periode" tickFormatter={monthLabel} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} minTickGap={16} />
                   <YAxis domain={["auto", "auto"]} tickFormatter={(v) => `${Math.round(v / 1000)}k`} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} width={48} />
-                  <Tooltip contentStyle={tooltipStyle(t)} labelFormatter={(p) => monthLong(p)} formatter={(v) => [fmtEUR(v), "Patrimoine"]} />
+                  <Tooltip contentStyle={tooltipStyle(t)} labelFormatter={(p) => monthLong(p)} formatter={(v, k) => [fmtEUR(v), k === "seule" ? "Épargne seule" : totRend ? "Épargne + gains" : "Patrimoine"]} />
                   <Area dataKey="treso" stroke={t.s1} strokeWidth={2} fill={t.s1} fillOpacity={0.12} isAnimationActive={false} />
+                  {totRend !== 0 && <Area dataKey="seule" stroke={t.textMuted} strokeWidth={1.5} strokeDasharray="5 4" fill="none" isAnimationActive={false} />}
                 </AreaChart>
               </ResponsiveContainer>
             </Panel>
@@ -4448,7 +4486,7 @@ Méthode de calcul de l'application :
                   <Row label="Total dépenses" vals={cols.map((c) => c.prevDep)} total={totDep} bold top />
                   <Section label="Patrimoine" />
                   <Row label={parAn ? "Épargne de la période" : "Épargne du mois"} vals={cols.map((c) => c.flux)} total={totRev - totDep} color={signColor} bold />
-                  {totRend !== 0 && <Row label={`Rendement (${fc.rendement} %/an)`} vals={cols.map((c) => c.rend)} total={totRend} color={signColor} />}
+                  {totRend !== 0 && <Row label={`Gains placements (${tauxAn.toFixed(1).replace(".", ",")} %/an)`} vals={cols.map((c) => c.rend)} total={totRend} color={signColor} />}
                   <Row label="Gain cumulé" vals={cols.map((c) => c.gain)} total={null} color={signColor} />
                   <Row label="Patrimoine en fin de période" vals={cols.map((c) => c.treso)} total={null} bold top />
                 </tbody>
@@ -5312,7 +5350,7 @@ Méthode de calcul de l'application :
               )}
 
               {tab === "previsionnel" && (
-                <ForecastTab months={budgetMonths} limits={budgetLimits} forecast={forecast} onChange={setForecast} releve={lastMonthly} onSetLimit={handleSetBudgetLimit} />
+                <ForecastTab months={budgetMonths} limits={budgetLimits} forecast={forecast} onChange={setForecast} releve={lastMonthly} onSetLimit={handleSetBudgetLimit} metrics={monthlyMetrics} />
               )}
 
               {tab === "operations" && (
