@@ -4264,6 +4264,110 @@ Méthode de calcul de l'application :
       return `${v} / mois${bornes}`;
     }
 
+    // ================== PRÉVISIONNEL : CALCULS PARTAGÉS (onglet, tableau de bord) ==================
+    const normForecast = (raw) => {
+      const r = raw || {};
+      return { rendement: "", horizon: 12, finVue: "", courantes: {}, inclureMoyennes: true, ...r,
+        revenus: (r.revenus || []).map(normLigne), depenses: (r.depenses || []).map(normLigne) };
+    };
+    // Dépenses courantes par catégorie : montant de chaque mois (val), moyenne sur les périodes données…
+    function planDepenses(fc, months, limits, periodes) {
+      const cur = moisCourant();
+      const last12 = months.filter((m) => m.periode < cur).slice(-12);
+      const avg = (fn) => (last12.length ? last12.reduce((s, m) => s + fn(m), 0) / last12.length : 0);
+      // Mois où la catégorie pèse le plus dans les relevés (proposé pour une dépense annuelle)
+      const moisPic = (cat) => {
+        const tot = Array(12).fill(0);
+        months.forEach((m) => { tot[Number(m.periode.slice(5, 7)) - 1] += depenseCat(m, cat); });
+        const max = Math.max(...tot);
+        return max > 0 ? tot.indexOf(max) + 1 : Number(cur.slice(5, 7));
+      };
+      return BUDGET_CATEGORIES.filter((c) => c.kind === "depense").map((c) => {
+        const L = getLimit(limits, c.id);
+        const moy = avg((m) => depenseCat(m, c.id));
+        const o = fc.courantes[c.id] || {};
+        const freq = o.freq || (L && L.annual ? "an" : "mois");
+        const mois = o.mois || moisPic(c.id);
+        // Source du montant : budget, moyenne des 12 derniers mois terminés (suit chaque import de relevé) ou saisie manuelle
+        const perso = o.montant !== undefined && o.montant !== "";
+        const src = perso ? "manuel" : o.source === "moyenne" || !L ? "moyenne" : "budget";
+        const annuel = src === "budget" ? (L.annual ? L.amount : L.amount * 12) : moy * 12;
+        const sugg = freq === "an" ? annuel : annuel / 12;
+        const source = [L ? `budget ${fmtEUR(L.amount)}/${L.annual ? "an" : "mois"}` : "pas de budget", `moyenne 12 mois ${fmtEUR(moy)}/mois`].join(" · ");
+        const inclus = o.inclus ?? (!!L || (fc.inclureMoyennes && moy >= 1));
+        // Dépense annuelle en plusieurs versements (vacances l'été et à Noël…) : [{ id, mois, montant }]
+        const multi = freq === "an" && (o.echeances || []).length >= 2;
+        const montant = multi ? o.echeances.reduce((s, e) => s + (Number(e.montant) || 0), 0) : perso ? Number(o.montant) || 0 : sugg;
+        const echs = freq !== "an" ? [] : multi ? o.echeances : [{ id: "u", mois, montant }];
+        // Montant d'un mois : celui saisi dans le plan de trésorerie (case remplie), sinon le montant du récapitulatif
+        const parMois = o.parMois || {};
+        const base = (p) => (freq === "an" ? echs.reduce((s, e) => s + (Number(p.slice(5, 7)) === Number(e.mois) ? Number(e.montant) || 0 : 0), 0) : montant);
+        const val = (p) => (!inclus ? 0 : parMois[p] !== undefined && parMois[p] !== "" ? Number(parMois[p]) || 0 : base(p));
+        const saisis = periodes.filter((p) => parMois[p] !== undefined && parMois[p] !== "").length;
+        // Moyenne mensuelle sur la période affichée (cases saisies comprises) ; en €/an : ramenée à l'année
+        const moyMois = periodes.reduce((s, p) => s + val(p), 0) / periodes.length;
+        const effectif = saisis ? (freq === "an" ? moyMois * 12 : moyMois) : montant;
+        return { cat: c.id, sugg, source, src: saisis ? "calendrier" : src, aBudget: !!L, moy, inclus, perso, freq, mois, multi, echs, montant: effectif, parMois, saisis, val, moyMois };
+      });
+    }
+    // Rendement historique : gain sur placements de chaque année / patrimoine en début d'année, ramené à 12 mois
+    // pour les années incomplètes (≥ 3 mois), puis moyenne des années
+    function rendementHisto(metrics) {
+      const parAn = new Map();
+      metrics.forEach((m, i) => {
+        if (i === 0) return;
+        const y = m.periode.slice(0, 4);
+        if (!parAn.has(y)) parAn.set(y, { annee: y, debut: metrics[i - 1].wealth, gain: 0, n: 0 });
+        const a = parAn.get(y); a.gain += m.gain; a.n++;
+      });
+      const ans = [...parAn.values()].filter((a) => a.n >= 3 && a.debut > 0)
+        .map((a) => ({ ...a, pct: (Math.pow(1 + a.gain / a.debut, 12 / a.n) - 1) * 100 }));
+      return { ans, moyenne: ans.length ? ans.reduce((s, a) => s + a.pct, 0) / ans.length : 0 };
+    }
+    // Mode : épargne seule, épargne + rendement historique moyen, ou épargne + rendement personnalisé
+    function tauxPlan(fc, histo) {
+      const mode = fc.modeRendement || (Number(fc.rendement) ? "perso" : "aucun");
+      const tauxAn = mode === "historique" ? histo.moyenne : mode === "perso" ? Number(fc.rendement) || 0 : 0;
+      return { mode, tauxAn, tauxMois: Math.pow(1 + tauxAn / 100, 1 / 12) - 1 };
+    }
+    // Épargne prévue d'un mois : revenus prévus − dépenses courantes − dépenses planifiées
+    function fluxPlan(fc, depRows, p) {
+      const rev = fc.revenus.reduce((s, l) => s + montantLigne(l, p), 0);
+      const dep = depRows.reduce((s, r) => s + r.val(p), 0) + fc.depenses.reduce((s, l) => s + montantLigne(l, p), 0);
+      return { rev, dep, flux: rev - dep };
+    }
+
+    // Plan vs réel : à partir d'un relevé de départ, le plan actuel est appliqué mois après mois (patrimoine théorique)
+    // et comparé à chaque relevé mensuel suivant. Écart du mois = réel − (réel du mois précédent + épargne et gains prévus).
+    function buildSuiviPlan(raw, months, limits, metrics) {
+      if (!metrics || metrics.length < 2) return null;
+      const fc = normForecast(raw);
+      const { tauxMois, tauxAn } = tauxPlan(fc, rendementHisto(metrics));
+      const choix = metrics.slice(0, -1).map((m) => m.periode);
+      const dernier = metrics[metrics.length - 1].periode;
+      // Départ par défaut : dernier relevé de l'année précédente (suivi depuis le 1er janvier), sinon 12 mois avant
+      const parDefaut = [...choix].reverse().find((p) => p < `${dernier.slice(0, 4)}-01`) || choix[Math.max(0, choix.length - 12)];
+      const debut = choix.includes(fc.debutSuivi) ? fc.debutSuivi : parDefaut;
+      const i0 = metrics.findIndex((m) => m.periode === debut);
+      const deps = planDepenses(fc, months, limits, [moisCourant()]);
+      let theo = metrics[i0].wealth;
+      const rows = [];
+      for (let i = i0 + 1; i < metrics.length; i++) {
+        const prev = metrics[i - 1], m = metrics[i];
+        // Mois sans relevé entre deux relevés : leur épargne prévue est comptée aussi
+        let epargnePrevue = 0, gainsPrevus = 0, attendu = prev.wealth;
+        for (let p = addMois(prev.periode, 1); p <= m.periode; p = addMois(p, 1)) {
+          const f = fluxPlan(fc, deps, p).flux;
+          const g = attendu * tauxMois;
+          gainsPrevus += g; epargnePrevue += f; attendu += g + f;
+          theo += theo * tauxMois + f;
+        }
+        rows.push({ periode: m.periode, reel: m.wealth, theo, ecartCumul: m.wealth - theo, attendu, ecartMois: m.wealth - attendu,
+          epargnePrevue, epargneReelle: m.gainRevenus, gainsPrevus, gainsReels: m.gain });
+      }
+      return { debut, depart: metrics[i0].wealth, choix, tauxAn, tauxMois, rows, dernier: rows[rows.length - 1] || null, fc, deps };
+    }
+
     // Date à taper ou à choisir dans le calendrier du navigateur ; pas de date antérieure au mois en cours
     function DateField({ value, onChange, style }) {
       return (
@@ -4322,14 +4426,10 @@ Méthode de calcul de l'application :
 
     const HORIZONS = [12, 24, 36, 60];
 
-    function ForecastTab({ months, limits, forecast, onChange, releve, onSetLimit, metrics = [] }) {
+    function ForecastTab({ months, limits, forecast, onChange, releve, onSetLimit, metrics = [], suivi = null }) {
       const t = useTheme();
       const isMobile = useIsMobile();
-      const raw = forecast || {};
-      const fc = {
-        rendement: "", horizon: 12, finVue: "", courantes: {}, inclureMoyennes: true, ...raw,
-        revenus: (raw.revenus || []).map(normLigne), depenses: (raw.depenses || []).map(normLigne),
-      };
+      const fc = normForecast(forecast);
       const set = (patch) => onChange({ ...fc, ...patch });
       const cur = moisCourant();
       const input = { background: t.panel, color: t.text, border: `1px solid ${t.border}` };
@@ -4348,40 +4448,7 @@ Méthode de calcul de l'application :
 
       // --- Dépenses courantes : chaque catégorie cochée ou non, mensuelle ou annuelle (à un mois donné),
       //     montant suggéré (budget ou moyenne) modifiable ---
-      // Mois où la catégorie pèse le plus dans les relevés (proposé pour une dépense annuelle)
-      const moisPic = (cat) => {
-        const tot = Array(12).fill(0);
-        months.forEach((m) => { tot[Number(m.periode.slice(5, 7)) - 1] += depenseCat(m, cat); });
-        const max = Math.max(...tot);
-        return max > 0 ? tot.indexOf(max) + 1 : Number(cur.slice(5, 7));
-      };
-      const depRows = BUDGET_CATEGORIES.filter((c) => c.kind === "depense").map((c) => {
-        const L = getLimit(limits, c.id);
-        const moy = avg((m) => depenseCat(m, c.id));
-        const o = fc.courantes[c.id] || {};
-        const freq = o.freq || (L && L.annual ? "an" : "mois");
-        const mois = o.mois || moisPic(c.id);
-        // Source du montant : budget, moyenne des 12 derniers mois terminés (suit chaque import de relevé) ou saisie manuelle
-        const perso = o.montant !== undefined && o.montant !== "";
-        const src = perso ? "manuel" : o.source === "moyenne" || !L ? "moyenne" : "budget";
-        const annuel = src === "budget" ? (L.annual ? L.amount : L.amount * 12) : moy * 12;
-        const sugg = freq === "an" ? annuel : annuel / 12;
-        const source = [L ? `budget ${fmtEUR(L.amount)}/${L.annual ? "an" : "mois"}` : "pas de budget", `moyenne 12 mois ${fmtEUR(moy)}/mois`].join(" · ");
-        const inclus = o.inclus ?? (!!L || (fc.inclureMoyennes && moy >= 1));
-        // Dépense annuelle en plusieurs versements (vacances l'été et à Noël…) : [{ id, mois, montant }]
-        const multi = freq === "an" && (o.echeances || []).length >= 2;
-        const montant = multi ? o.echeances.reduce((s, e) => s + (Number(e.montant) || 0), 0) : perso ? Number(o.montant) || 0 : sugg;
-        const echs = freq !== "an" ? [] : multi ? o.echeances : [{ id: "u", mois, montant }];
-        // Montant d'un mois : celui saisi dans le plan de trésorerie (case remplie), sinon le montant du récapitulatif
-        const parMois = o.parMois || {};
-        const base = (p) => (freq === "an" ? echs.reduce((s, e) => s + (Number(p.slice(5, 7)) === Number(e.mois) ? Number(e.montant) || 0 : 0), 0) : montant);
-        const val = (p) => (!inclus ? 0 : parMois[p] !== undefined && parMois[p] !== "" ? Number(parMois[p]) || 0 : base(p));
-        const saisis = periodes.filter((p) => parMois[p] !== undefined && parMois[p] !== "").length;
-        // Moyenne mensuelle sur la période affichée (cases saisies comprises) ; en €/an : ramenée à l'année
-        const moyMois = periodes.reduce((s, p) => s + val(p), 0) / periodes.length;
-        const effectif = saisis ? (freq === "an" ? moyMois * 12 : moyMois) : montant;
-        return { cat: c.id, sugg, source, src: saisis ? "calendrier" : src, aBudget: !!L, moy, inclus, perso, freq, mois, multi, echs, montant: effectif, parMois, saisis, val, moyMois };
-      });
+      const depRows = planDepenses(fc, months, limits, periodes);
       // Plan de trésorerie : TOUS les postes de dépense ; récapitulatif : ceux qui ont un montant
       const depAll = [...depRows].sort((a, b) => (b.freq === "an" ? b.sugg / 12 : b.sugg) - (a.freq === "an" ? a.sugg / 12 : a.sugg) || a.cat.localeCompare(b.cat));
       const depRecap = depAll.filter((r) => r.sugg >= 1 || r.perso || r.inclus || r.saisis);
@@ -4433,21 +4500,9 @@ Méthode de calcul de l'application :
       const depart = releve ? Number(releve.totalWealth) || 0 : 0;
       // Rendement historique : gain sur placements de chaque année / patrimoine en début d'année, ramené à 12 mois
       // pour les années incomplètes (≥ 3 mois), puis moyenne des années
-      const histo = (() => {
-        const parAn = new Map();
-        metrics.forEach((m, i) => {
-          if (i === 0) return;
-          const y = m.periode.slice(0, 4);
-          if (!parAn.has(y)) parAn.set(y, { annee: y, debut: metrics[i - 1].wealth, gain: 0, n: 0 });
-          const a = parAn.get(y); a.gain += m.gain; a.n++;
-        });
-        const ans = [...parAn.values()].filter((a) => a.n >= 3 && a.debut > 0)
-          .map((a) => ({ ...a, pct: (Math.pow(1 + a.gain / a.debut, 12 / a.n) - 1) * 100 }));
-        return { ans, moyenne: ans.length ? ans.reduce((s, a) => s + a.pct, 0) / ans.length : 0 };
-      })();
+      const histo = rendementHisto(metrics);
       // Mode : épargne seule, épargne + rendement historique moyen, ou épargne + rendement personnalisé
-      const mode = fc.modeRendement || (Number(fc.rendement) ? "perso" : "aucun");
-      const tauxAn = mode === "historique" ? histo.moyenne : mode === "perso" ? Number(fc.rendement) || 0 : 0;
+      const { mode, tauxAn } = tauxPlan(fc, histo);
       const tauxMois = Math.pow(1 + tauxAn / 100, 1 / 12) - 1;
       let treso = depart, seule = depart;
       mensuel.forEach((c) => {
@@ -4536,6 +4591,23 @@ Méthode de calcul de l'application :
         { periode: moisReleve && moisReleve < cur ? moisReleve : addMois(cur, -1), treso: Math.round(depart), seule: Math.round(depart), gain: 0 },
         ...mensuel.map((c) => ({ periode: c.p, epargne: Math.round(c.flux), treso: Math.round(c.treso), seule: Math.round(c.seule), gain: Math.round(c.gain) })),
       ];
+      // Courbe du patrimoine : relevés réels et trajectoire théorique du plan depuis le départ du suivi, puis projection.
+      // La trajectoire théorique continue dans le futur : on voit si l'on est en avance ou en retard sur le plan.
+      const chartPatri = (() => {
+        if (!suivi || !suivi.rows.length) return chartData;
+        const passe = [{ periode: suivi.debut, reel: Math.round(suivi.depart), theo: Math.round(suivi.depart) },
+          ...suivi.rows.map((r) => ({ periode: r.periode, reel: Math.round(r.reel), theo: Math.round(r.theo) }))];
+        const last = passe[passe.length - 1];
+        last.treso = Math.round(depart); last.seule = Math.round(depart);
+        let theo = suivi.dernier.theo, prevP = last.periode;
+        const futur = chartData.slice(1).filter((c) => c.periode > prevP).map((c) => {
+          for (let p = addMois(prevP, 1); p <= c.periode; p = addMois(p, 1)) theo += theo * tauxMois + fluxPlan(fc, depRows, p).flux;
+          prevP = c.periode;
+          return { ...c, theo: Math.round(theo) };
+        });
+        return [...passe, ...futur];
+      })();
+      const suiviLabel = (k) => ({ reel: "Patrimoine réel", theo: "Théorique (plan)", seule: "Épargne seule", treso: totRend ? "Projection épargne + gains" : "Projection" }[k] || k);
       const chip = (on) => ({ border: `1px solid ${on ? t.accent : t.border}`, color: on ? t.accent : t.text, background: on ? `${t.accent}1f` : t.panelAlt });
 
       return (
@@ -4596,17 +4668,23 @@ Méthode de calcul de l'application :
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 md:gap-5">
-            <Panel title="Patrimoine projeté" subtitle={`${libVue} · patrimoine total en fin de mois`}>
-              {totRend !== 0 && <ChartLegend items={[{ label: `Épargne + gains (${tauxAn.toFixed(1).replace(".", ",")} %)`, color: t.s1 }, { label: "Épargne seule", color: t.textMuted }]} />}
+            <Panel title="Patrimoine projeté" subtitle={suivi?.rows.length ? `Réel et théorique depuis ${monthLong(suivi.debut)}, puis projection jusqu'à ${monthLabel(finP)}` : `${libVue} · patrimoine total en fin de mois`}>
+              <ChartLegend items={[
+                ...(suivi?.rows.length ? [{ label: "Réel", color: t.s4 }, { label: "Théorique (plan)", color: t.s2 }] : []),
+                { label: totRend ? `Projection épargne + gains (${tauxAn.toFixed(1).replace(".", ",")} %)` : "Projection", color: t.s1 },
+                ...(totRend !== 0 ? [{ label: "Épargne seule", color: t.textMuted }] : []),
+              ]} />
               <ResponsiveContainer width="100%" height={isMobile ? 200 : 260}>
-                <AreaChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                <ComposedChart data={chartPatri} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                   <CartesianGrid stroke={t.border} vertical={false} />
                   <XAxis dataKey="periode" tickFormatter={monthLabel} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} minTickGap={16} />
                   <YAxis domain={["auto", "auto"]} tickFormatter={(v) => `${Math.round(v / 1000)}k`} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} width={48} />
-                  <Tooltip contentStyle={tooltipStyle(t)} labelFormatter={(p) => monthLong(p)} formatter={(v, k) => [fmtEUR(v), k === "seule" ? "Épargne seule" : totRend ? "Épargne + gains" : "Patrimoine"]} />
-                  <Area dataKey="treso" stroke={t.s1} strokeWidth={2} fill={t.s1} fillOpacity={0.12} isAnimationActive={false} />
+                  <Tooltip contentStyle={tooltipStyle(t)} labelFormatter={(p) => monthLong(p)} formatter={(v, k) => [fmtEUR(v), suiviLabel(k)]} />
+                  <Area dataKey="treso" stroke={t.s1} strokeWidth={2} fill={t.s1} fillOpacity={0.12} isAnimationActive={false} connectNulls={false} />
                   {totRend !== 0 && <Area dataKey="seule" stroke={t.textMuted} strokeWidth={1.5} strokeDasharray="5 4" fill="none" isAnimationActive={false} />}
-                </AreaChart>
+                  {suivi?.rows.length > 0 && <Line dataKey="theo" stroke={t.s2} strokeWidth={1.5} strokeDasharray="4 3" dot={false} isAnimationActive={false} />}
+                  {suivi?.rows.length > 0 && <Line dataKey="reel" stroke={t.s4} strokeWidth={2.5} dot={{ r: 2.5, fill: t.s4 }} isAnimationActive={false} />}
+                </ComposedChart>
               </ResponsiveContainer>
             </Panel>
             <Panel title="Gain cumulé" subtitle={`Épargne de chaque mois et gain cumulé depuis le dernier relevé${totRend ? " (rendement compris)" : ""}`}>
@@ -4627,6 +4705,64 @@ Méthode de calcul de l'application :
               </ResponsiveContainer>
             </Panel>
           </div>
+
+          {suivi && (
+            <Panel title="Plan vs réel" subtitle={`À chaque relevé de patrimoine : ce que le plan prévoyait et ce qui s'est passé. Écart du mois = réel − (réel du mois précédent + épargne${suivi.tauxAn ? " et gains" : ""} prévus) ; écart cumulé depuis le départ du suivi.`}
+              action={
+                <label className="flex items-center gap-1.5 text-xs shrink-0" style={{ color: t.textMuted }}>
+                  depuis
+                  <select value={suivi.debut} onChange={(e) => set({ debutSuivi: e.target.value })} className="rounded-lg px-1.5 py-1 text-xs" style={input}>
+                    {suivi.choix.map((p) => <option key={p} value={p}>{monthLabel(p)}</option>)}
+                  </select>
+                </label>
+              }>
+              {suivi.dernier && (
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
+                  {[
+                    [`Réel · ${monthLabel(suivi.dernier.periode)}`, fmtEUR(suivi.dernier.reel), null],
+                    ["Théorique (plan)", fmtEUR(suivi.dernier.theo), null],
+                    ["Écart du mois", signed(suivi.dernier.ecartMois), suivi.dernier.ecartMois],
+                    [`Écart depuis ${monthLabel(suivi.debut)}`, signed(suivi.dernier.ecartCumul), suivi.dernier.ecartCumul],
+                  ].map(([l, v, n]) => (
+                    <div key={l} className="rounded-xl p-2.5" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
+                      <div className="text-[11px]" style={{ color: t.textMuted }}>{l}</div>
+                      <div className="text-base font-semibold" style={{ color: n === null ? t.text : signColor(n), ...NUM }}>{v}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {suivi.rows.length === 0 ? (
+                <p className="text-sm" style={{ color: t.textMuted }}>Aucun relevé de patrimoine après {monthLong(suivi.debut)} : l'écart apparaîtra au prochain point mensuel.</p>
+              ) : (
+                <div className="overflow-x-auto -mx-1 px-1">
+                  <table className="w-full text-xs md:text-sm" style={{ ...NUM, borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr className="text-xs" style={{ color: t.textMuted }}>
+                        {["Mois", "Épargne prévue", "Épargne réelle", ...(suivi.tauxAn ? ["Gains prévus"] : []), "Gains placements", "Écart du mois", "Théorique", "Réel", "Écart cumulé"].map((h, i) => (
+                          <th key={h} className={`${i ? "text-right" : "text-left"} font-medium py-1.5 px-2 whitespace-nowrap`}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...suivi.rows].reverse().map((r) => (
+                        <tr key={r.periode} style={{ borderTop: `1px solid ${t.border}` }}>
+                          <td className="py-1.5 px-2 text-left whitespace-nowrap" style={{ color: t.text }}>{monthLabel(r.periode)}</td>
+                          <td className={cell} style={{ color: t.textMuted }}>{signed(r.epargnePrevue)}</td>
+                          <td className={cell} style={{ color: t.text }}>{signed(r.epargneReelle)}</td>
+                          {suivi.tauxAn ? <td className={cell} style={{ color: t.textMuted }}>{signed(r.gainsPrevus)}</td> : null}
+                          <td className={cell} style={{ color: t.text }}>{signed(r.gainsReels)}</td>
+                          <td className={cell} style={{ color: signColor(r.ecartMois), fontWeight: 600 }}>{signed(r.ecartMois)}</td>
+                          <td className={cell} style={{ color: t.textMuted }}>{fmtEUR(r.theo)}</td>
+                          <td className={cell} style={{ color: t.text }}>{fmtEUR(r.reel)}</td>
+                          <td className={cell} style={{ color: signColor(r.ecartCumul), fontWeight: 600 }}>{signed(r.ecartCumul)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Panel>
+          )}
 
           <Panel title="Plan de trésorerie" subtitle={libVue}
             action={nbMois > 12 && (
@@ -5168,6 +5304,8 @@ Méthode de calcul de l'application :
 
       const monthlyMetrics = useMemo(() => buildMonthlyMetrics(monthlyEff, allFlows), [monthlyEff, allFlows]);
       const yearlyMetrics = useMemo(() => buildYearlyMetrics(monthlyMetrics), [monthlyMetrics]);
+      // Plan vs réel : recalculé à chaque relevé de patrimoine, modification du prévisionnel ou import de relevés bancaires
+      const suiviPlan = useMemo(() => buildSuiviPlan(forecast, budgetMonths, budgetLimits, monthlyMetrics), [forecast, budgetMonths, budgetLimits, monthlyMetrics, catsVersion]);
       const categoryAlloc = useMemo(() => aggregatePositions(positions, "category"), [positions]);
       const sectorAlloc = useMemo(() => aggregateSectors(positions), [positions]);
 
@@ -5428,6 +5566,23 @@ Méthode de calcul de l'application :
                     );
                   })()}
 
+                  {suiviPlan?.dernier && (() => {
+                    const d = suiviPlan.dernier;
+                    const col = (v) => (v >= 0 ? t.gain : t.loss);
+                    return (
+                      <button type="button" onClick={() => goTab("previsionnel")} className="w-full text-left rounded-2xl p-4 md:p-5 flex flex-wrap items-center gap-x-6 gap-y-2"
+                        style={{ background: t.panel, border: `1px solid ${t.border}`, boxShadow: t.shadow }}>
+                        <span className="text-sm font-semibold flex items-center gap-2" style={{ color: t.text }}>
+                          <Target size={16} color={t.accent} /> Plan vs réel · {monthLong(d.periode)}
+                        </span>
+                        {[["Réel", fmtEUR(d.reel), null], ["Théorique", fmtEUR(d.theo), null], ["Écart du mois", signed(d.ecartMois), d.ecartMois], [`Depuis ${monthLabel(suiviPlan.debut)}`, signed(d.ecartCumul), d.ecartCumul]].map(([l, v, n]) => (
+                          <span key={l} className="text-xs" style={{ color: t.textMuted }}>{l} <span className="text-sm font-semibold ml-1" style={{ color: n === null ? t.text : col(n), ...NUM }}>{v}</span></span>
+                        ))}
+                        <ChevronRight size={16} color={t.textMuted} className="ml-auto" />
+                      </button>
+                    );
+                  })()}
+
                   <Panel title="Évolution mensuelle" subtitle="Ce que vos revenus (moins vos dépenses) et vos placements ont apporté au patrimoine, mois par mois"
                     action={
                       <div className="flex shrink-0 p-0.5 rounded-lg text-xs" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
@@ -5520,7 +5675,7 @@ Méthode de calcul de l'application :
               )}
 
               {tab === "previsionnel" && (
-                <ForecastTab months={budgetMonths} limits={budgetLimits} forecast={forecast} onChange={setForecast} releve={lastMonthly} onSetLimit={handleSetBudgetLimit} metrics={monthlyMetrics} />
+                <ForecastTab months={budgetMonths} limits={budgetLimits} forecast={forecast} onChange={setForecast} releve={lastMonthly} onSetLimit={handleSetBudgetLimit} metrics={monthlyMetrics} suivi={suiviPlan} />
               )}
 
               {tab === "operations" && (
