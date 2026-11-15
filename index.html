@@ -4662,7 +4662,9 @@ Méthode de calcul de l'application :
             <KPICard icon={PiggyBank} label="Épargne prévue" value={signed(totRev - totDep)} tone={totRev - totDep >= 0 ? "up" : "down"}
               sub={totRev > 0 ? `${Math.round(((totRev - totDep) / totRev) * 100)} % des revenus` : "Saisissez vos revenus"} />
             <KPICard icon={TrendingUp} label={`Patrimoine fin ${monthLabel(finP)}`} value={fmtEUR(treso)} tone={gainTotal >= 0 ? "up" : "down"}
-              sub={`Gain ${signed(gainTotal)}${depart ? ` (${gainTotal >= 0 ? "+" : ""}${Math.round((gainTotal / depart) * 1000) / 10} %)` : ""}${totRend ? ` · dont placements ${signed(totRend)} · épargne seule : ${fmtEUR(seule)}` : ""}`} />
+              sub={totRend
+                ? `+${fmtEUR(gainTotal)} sur ${nbMois} mois = épargne ${signed(totRev - totDep)} + placements ${signed(totRend)} (${tauxAn.toFixed(1).replace(".", ",")} %/an)`
+                : `Gain ${signed(gainTotal)} sur ${nbMois} mois, épargne seule (sans gain de placement)`} />
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 md:gap-5">
