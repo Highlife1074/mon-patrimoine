@@ -4318,6 +4318,16 @@ Méthode de calcul de l'application :
       };
 
       // --- Tableau du plan de trésorerie ---
+      // Lignes de même libellé (casse et espaces ignorés) regroupées en une seule ligne du tableau
+      const groupes = (lignes, sansNom) => {
+        const m = new Map();
+        lignes.forEach((l, i) => {
+          const key = (l.label || "").trim().toLowerCase() || `__${l.id}`;
+          if (!m.has(key)) m.set(key, { key, label: (l.label || "").trim() || sansNom, idx: [] });
+          m.get(key).idx.push(i);
+        });
+        return [...m.values()].map((g) => (g.idx.length > 1 ? { ...g, label: `${g.label} (${g.idx.length} lignes)` } : g));
+      };
       const cell = "py-1.5 px-2 text-right whitespace-nowrap";
       const sticky = { position: "sticky", left: 0, background: t.panel, zIndex: 1 };
       const v0 = (v) => (Math.abs(v) < 0.5 ? <span style={{ color: t.textMuted, opacity: 0.5 }}>·</span> : fmtEUR(v));
@@ -4429,12 +4439,12 @@ Méthode de calcul de l'application :
                 </thead>
                 <tbody>
                   <Section label="Revenus" />
-                  {fc.revenus.map((l, i) => <Row key={l.id} label={l.label || "Revenu sans nom"} vals={cols.map((c) => c.rev[i])} total={sum((c) => c.rev[i])} />)}
+                  {groupes(fc.revenus, "Revenu sans nom").map((g) => <Row key={g.key} label={g.label} vals={cols.map((c) => g.idx.reduce((s, i) => s + c.rev[i], 0))} total={sum((c) => g.idx.reduce((s, i) => s + c.rev[i], 0))} />)}
                   <Row label="Total revenus" vals={cols.map((c) => c.prevRev)} total={totRev} bold top />
                   <Section label="Dépenses" />
                   <Row label="Dépenses courantes mensuelles" vals={cols.map((c) => c.cour)} total={sum((c) => c.cour)} />
                   {annuelles.map((r, i) => <Row key={r.cat} label={`${r.cat} (annuel)`} vals={cols.map((c) => c.an[i])} total={sum((c) => c.an[i])} />)}
-                  {fc.depenses.map((l, i) => <Row key={l.id} label={l.label || "Dépense sans nom"} vals={cols.map((c) => c.dep[i])} total={sum((c) => c.dep[i])} />)}
+                  {groupes(fc.depenses, "Dépense sans nom").map((g) => <Row key={g.key} label={g.label} vals={cols.map((c) => g.idx.reduce((s, i) => s + c.dep[i], 0))} total={sum((c) => g.idx.reduce((s, i) => s + c.dep[i], 0))} />)}
                   <Row label="Total dépenses" vals={cols.map((c) => c.prevDep)} total={totDep} bold top />
                   <Section label="Patrimoine" />
                   <Row label={parAn ? "Épargne de la période" : "Épargne du mois"} vals={cols.map((c) => c.flux)} total={totRev - totDep} color={signColor} bold />
