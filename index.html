@@ -4579,6 +4579,9 @@ Méthode de calcul de l'application :
 
       // Persistance Firebase
       const [loaded, setLoaded] = useState(false);
+      // Lecture Firebase échouée : on n'affiche pas l'application et on n'enregistre RIEN,
+      // sinon l'état vide par défaut écraserait le document sauvegardé
+      const [loadError, setLoadError] = useState("");
       const [saveStatus, setSaveStatus] = useState("idle"); 
       const [saveError, setSaveError] = useState("");
       const [lastSaved, setLastSaved] = useState(null);
@@ -4619,6 +4622,8 @@ Méthode de calcul de l'application :
             }
           } catch (e) {
             console.error("Erreur de chargement Firebase:", e);
+            if (!annule) setLoadError(e?.code === "permission-denied" ? "accès refusé par Firebase" : e?.message || String(e));
+            return;
           }
           if (!annule) setLoaded(true);
         })();
@@ -4626,7 +4631,7 @@ Méthode de calcul de l'application :
       }, []);
 
       useEffect(() => {
-        if (!loaded) return; 
+        if (!loaded || loadError) return;
         setSaveStatus("saving");
         const delai = setTimeout(async () => {
           try {
@@ -4995,6 +5000,18 @@ Méthode de calcul de l'application :
         signOut(auth).catch((error) => console.error("Erreur déconnexion:", error));
       };
 
+      if (loadError) {
+        return (
+          <div className="min-h-screen w-full flex items-center justify-center p-6" style={{ background: t.bg }}>
+            <div className="max-w-md text-center space-y-3">
+              <p className="text-base font-semibold" style={{ color: t.loss }}>Impossible de lire vos données</p>
+              <p className="text-sm" style={{ color: t.textMuted }}>{loadError}</p>
+              <p className="text-sm" style={{ color: t.textMuted }}>Rien n'a été enregistré : vos données sauvegardées ne sont pas modifiées. Vérifiez votre connexion puis réessayez.</p>
+              <button onClick={() => window.location.reload()} className="text-sm px-4 py-2 rounded-lg" style={{ background: t.accent, color: t.onAccent }}>Réessayer</button>
+            </div>
+          </div>
+        );
+      }
       if (!loaded) {
         return (
           <div className="min-h-screen w-full flex items-center justify-center" style={{ background: t.bg }}>
