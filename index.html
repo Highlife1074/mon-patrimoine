@@ -667,6 +667,97 @@
       return (done.length ? done[done.length - 1] : months[months.length - 1])?.periode || null;
     }
 
+    // ================== RELEVÉS DÉJÀ IMPORTÉS (ANTI-DOUBLONS) ==================
+    // Une opération est reconnue par son identifiant (date, libellé brut, montant lus sur le relevé), puis, à défaut,
+    // par son contenu : même compte, même montant au centime, même libellé et même jour. La catégorie, le commentaire
+    // ou le choix manuel n'entrent JAMAIS dans la comparaison : réimporter un relevé après avoir reclassé ses
+    // opérations ne crée pas de doublon et ne touche pas aux catégories choisies à la main.
+    // Format d'origine : un export Revolut CSV / Excel porte le champ « product », un relevé PDF non
+    const txFormat = (tx) => (String(tx.src || "revolut").startsWith("revolut") && "product" in tx ? "csv" : "pdf");
+    const srcFamily = (tx) => (String(tx.src || "revolut").startsWith("revolut") ? "revolut" : tx.src);
+    const dayIndex = (d) => Math.round(Date.parse(`${d}T00:00:00Z`) / 86400000);
+    // Même libellé une fois normalisé (casse, accents, chiffres, ponctuation), ou l'un contenu mot pour mot dans l'autre
+    const sameLabel = (a, b) => {
+      const x = normTxt(a), y = normTxt(b);
+      return !!x && !!y && (x === y || ` ${x} `.includes(` ${y} `) || ` ${y} `.includes(` ${x} `));
+    };
+    // Écart de jours toléré : même format → même jour ; CSV ↔ PDF → 2 jours (date de début / date de débit)
+    const matchGap = (a, b) => {
+      if (Math.round(a.amt * 100) !== Math.round(b.amt * 100) || !sameLabel(a.desc, b.desc)) return null;
+      const gap = Math.abs(dayIndex(a.d) - dayIndex(b.d));
+      if (txFormat(a) === txFormat(b)) return (a.src || "revolut") === (b.src || "revolut") && gap === 0 ? 0 : null;
+      return srcFamily(a) === srcFamily(b) && gap <= 2 ? gap : null;
+    };
+
+    // existing : opérations déjà enregistrées ; batches : opérations lues, un tableau par fichier importé.
+    // Renvoie les nouvelles opérations, les opérations « en attente » désormais passées (id existant → opération finale)
+    // et les catégories automatiques à recalculer (id existant → catégorie). Les doublons sont simplement ignorés.
+    function mergeImportedTx(existing, batches) {
+      const isExisting = new Set(existing.map((tx) => tx.id));
+      const base = [...existing]; // grossit avec les nouvelles opérations des fichiers précédents du même import
+      const byId = new Map(existing.map((tx) => [tx.id, tx]));
+      const settled = new Map(), recat = new Map();
+      const fresh = [];
+      let dup = 0;
+      const known = (k, tx) => {
+        if (!isExisting.has(k.id) || settled.has(k.id)) return;
+        if (k.pending && !tx.pending) { settled.set(k.id, tx); recat.delete(k.id); }
+        else if (!k.manual && k.cat !== tx.cat) recat.set(k.id, tx.cat);
+      };
+      // Chaque fichier est rapproché indépendamment : une opération connue ne peut correspondre qu'à UNE ligne d'un même
+      // fichier (deux achats identiques le même jour restent deux opérations), mais à une ligne de chaque fichier
+      // (le même mois importé en CSV et en PDF ne compte qu'une fois).
+      batches.forEach((list) => {
+        if (!list.length) return;
+        // Période couverte par le fichier : rien n'est rapproché hors de cette période
+        // (le café du 30 juin d'un export ne « mange » pas celui du 1er juillet déjà importé d'un autre relevé)
+        const lo = Math.min(...list.map((tx) => dayIndex(tx.d))), hi = Math.max(...list.map((tx) => dayIndex(tx.d)));
+        const inRange = (k) => { const d = dayIndex(k.d); return d >= lo && d <= hi; };
+        const used = new Set();
+        // 1) Identifiant identique
+        const rest = [];
+        list.forEach((tx) => {
+          const k = byId.get(tx.id);
+          if (k && !used.has(k.id)) { used.add(k.id); dup++; known(k, tx); } else rest.push(tx);
+        });
+        // 2) Même contenu (montant au centime, libellé, jour ; ±2 jours entre un CSV et un PDF)
+        const pool = new Map(); // montant en centimes → opérations connues
+        base.forEach((k) => {
+          if (used.has(k.id) || !inRange(k)) return;
+          const c = Math.round(k.amt * 100);
+          if (!pool.has(c)) pool.set(c, []);
+          pool.get(c).push(k);
+        });
+        const added = [];
+        rest.forEach((tx) => {
+          let best = null, bestGap = Infinity;
+          (pool.get(Math.round(tx.amt * 100)) || []).forEach((k) => {
+            if (used.has(k.id)) return;
+            const gap = matchGap(tx, k);
+            if (gap !== null && gap < bestGap) { best = k; bestGap = gap; }
+          });
+          // 3) Opération « en attente » dont le montant final a changé : même compte, même libellé, quelques jours d'écart
+          if (!best && !tx.pending) {
+            best = base.find((k) => k.pending && !used.has(k.id) && inRange(k) && srcFamily(k) === srcFamily(tx)
+              && sameLabel(k.desc, tx.desc) && Math.abs(dayIndex(k.d) - dayIndex(tx.d)) <= 3 && Math.sign(k.amt) === Math.sign(tx.amt)) || null;
+          }
+          if (best) { used.add(best.id); dup++; known(best, tx); return; }
+          added.push(tx);
+        });
+        added.forEach((tx) => { fresh.push(tx); base.push(tx); byId.set(tx.id, tx); });
+      });
+      return { fresh, settled, recat, dup };
+    }
+
+    // Applique le résultat de mergeImportedTx : catégorie, choix manuel et commentaire existants sont conservés
+    function applyMergedTx(prev, { fresh, settled, recat }) {
+      return [...prev.map((tx) => {
+        if (settled.has(tx.id)) return { ...settled.get(tx.id), cat: tx.cat, ...(tx.manual ? { manual: true } : {}), ...(tx.note ? { note: tx.note } : {}) };
+        if (recat.has(tx.id)) return { ...tx, cat: recat.get(tx.id) };
+        return tx;
+      }), ...fresh];
+    }
+
     // ================== RELEVÉS LCL (PDF) ==================
     const PDFJS_VERSION = "3.11.174";
     let pdfjsPromise = null;
@@ -4764,7 +4855,7 @@ Méthode de calcul de l'application :
       }, [positions, monthly, weeklyArchive, transfers, recurringTransfers, budgetTx, budgetRules, budgetLimits, customCats, forecast, loaded]);
 
       const handleBudgetImport = async (files) => {
-        const transactions = [];
+        const batches = []; // une liste d'opérations par fichier
         const warnings = [];
         let skippedCurrency = 0, skippedState = 0, controles = 0;
         for (const file of files) {
@@ -4775,7 +4866,7 @@ Méthode de calcul de l'application :
               if (!parsed.ops.length) throw new Error("aucune opération trouvée dans ce relevé Revolut");
               if (parsed.ecarts) warnings.push(`${file.name} : ${parsed.ecarts} ligne${parsed.ecarts > 1 ? "s" : ""} ne retombe${parsed.ecarts > 1 ? "nt" : ""} pas sur le solde affiché — vérifiez-les`);
               else controles++;
-              transactions.push(...revolutPdfTransactions(parsed, budgetRules));
+              batches.push(revolutPdfTransactions(parsed, budgetRules));
             } else if (pdfPages) {
               const parsed = parseLclPages(pdfPages);
               if (!parsed.ops.length) throw new Error("aucune opération trouvée (seuls les relevés de compte LCL en PDF sont reconnus)");
@@ -4783,46 +4874,35 @@ Méthode de calcul de l'application :
               if (parsed.ancienSolde !== null && parsed.nouveauSolde !== null && Math.abs(total - parsed.nouveauSolde) > 0.01) {
                 warnings.push(`${file.name} : le total lu (${fmtEURcents(total)}) ne retombe pas sur le solde du relevé (${fmtEURcents(parsed.nouveauSolde)}) — vérifiez ses opérations`);
               } else if (parsed.nouveauSolde !== null) controles++;
-              transactions.push(...lclTransactions(parsed, budgetRules));
+              batches.push(lclTransactions(parsed, budgetRules));
             } else {
               const { headers, rows } = await readFileAsRows(file);
               if (!headers?.length) throw new Error("fichier vide ou illisible");
               const r = parseRevolutRows(headers, rows, budgetRules);
               if (!r.transactions.length) throw new Error("aucune opération en euros trouvée");
-              transactions.push(...r.transactions);
+              batches.push(r.transactions);
               skippedCurrency += r.skippedCurrency; skippedState += r.skippedState;
             }
           } catch (e) {
             warnings.push(`${file.name} : ${e.message || "lecture impossible"}`);
           }
         }
+        const transactions = batches.flat();
         if (!transactions.length) throw new Error(warnings.join(" · ") || "aucune opération trouvée");
-        const known = new Map(budgetTx.map((tx) => [tx.id, tx]));
-        const freshMap = new Map();
-        transactions.forEach((tx) => { if (!known.has(tx.id) && !freshMap.has(tx.id)) freshMap.set(tx.id, tx); });
-        const fresh = [...freshMap.values()];
-        // Une opération « en attente » déjà connue est mise à jour (montant final), sans perdre la catégorie choisie
-        const settled = transactions.filter((tx) => known.get(tx.id)?.pending && !tx.pending);
-        // Une opération déjà connue dont la catégorie n'a pas été choisie à la main reprend la catégorie calculée
-        const recat = new Map(transactions.filter((tx) => { const k = known.get(tx.id); return k && !k.manual && k.cat !== tx.cat; }).map((tx) => [tx.id, tx.cat]));
-        setBudgetTx((prev) => {
-          const upd = new Map(settled.map((tx) => [tx.id, tx]));
-          return [...prev.map((tx) => {
-            if (upd.has(tx.id)) return { ...upd.get(tx.id), cat: tx.cat, ...(tx.manual ? { manual: true } : {}), ...(tx.note ? { note: tx.note } : {}) };
-            if (recat.has(tx.id)) return { ...tx, cat: recat.get(tx.id) };
-            return tx;
-          }), ...fresh];
-        });
+        // Opérations déjà présentes (même si vous avez changé leur catégorie depuis) : ignorées, rien n'est dupliqué
+        const merged = mergeImportedTx(budgetTx, batches);
+        const { fresh, recat, settled, dup } = merged;
+        setBudgetTx((prev) => applyMergedTx(prev, merged));
         const ds = transactions.map((tx) => tx.d).sort();
-        const dup = transactions.length - fresh.length;
         const parts = [`${fresh.length} nouvelle${fresh.length > 1 ? "s" : ""} opération${fresh.length > 1 ? "s" : ""} (du ${new Date(ds[0]).toLocaleDateString("fr-FR")} au ${new Date(ds[ds.length - 1]).toLocaleDateString("fr-FR")})`];
-        if (dup) parts.push(`${dup} déjà importée${dup > 1 ? "s" : ""}`);
+        if (dup) parts.push(`${dup} déjà importée${dup > 1 ? "s" : ""} (ignorée${dup > 1 ? "s" : ""}, catégories conservées)`);
+        if (settled.size) parts.push(`${settled.size} opération${settled.size > 1 ? "s" : ""} en attente finalisée${settled.size > 1 ? "s" : ""}`);
         if (recat.size) parts.push(`${recat.size} catégorie${recat.size > 1 ? "s" : ""} automatique${recat.size > 1 ? "s" : ""} mise${recat.size > 1 ? "s" : ""} à jour`);
         if (controles) parts.push(`soldes vérifiés sur ${controles} relevé${controles > 1 ? "s" : ""} PDF ✓`);
         if (skippedCurrency) parts.push(`${skippedCurrency} hors euros ignorée${skippedCurrency > 1 ? "s" : ""}`);
         if (skippedState) parts.push(`${skippedState} annulée${skippedState > 1 ? "s" : ""} ignorée${skippedState > 1 ? "s" : ""}`);
         // Analyse du dernier mois terminé couvert par ces relevés
-        const apres = [...budgetTx.map((tx) => (recat.has(tx.id) ? { ...tx, cat: recat.get(tx.id) } : tx)), ...fresh];
+        const apres = applyMergedTx(budgetTx, merged);
         const moisApres = buildBudgetMonths(apres);
         const importes = buildBudgetMonths(transactions);
         const focus = lastCompleteMonth(importes);
