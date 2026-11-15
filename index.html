@@ -4239,19 +4239,39 @@ Méthode de calcul de l'application :
         const source = L ? (L.annual ? `budget ${fmtEUR(L.amount)}/an` : `budget ${fmtEUR(L.amount)}/mois`) : `moyenne ${fmtEUR(moy)}/mois`;
         const perso = o.montant !== undefined && o.montant !== "";
         const inclus = o.inclus ?? (!!L || (fc.inclureMoyennes && moy >= 1));
-        return { cat: c.id, sugg, source, moy, inclus, perso, freq, mois, montant: perso ? Number(o.montant) || 0 : sugg };
+        // Dépense annuelle en plusieurs versements (vacances l'été et à Noël…) : [{ id, mois, montant }]
+        const multi = freq === "an" && (o.echeances || []).length >= 2;
+        const montant = multi ? o.echeances.reduce((s, e) => s + (Number(e.montant) || 0), 0) : perso ? Number(o.montant) || 0 : sugg;
+        const echs = freq !== "an" ? [] : multi ? o.echeances : [{ id: "u", mois, montant }];
+        return { cat: c.id, sugg, source, moy, inclus, perso, freq, mois, multi, echs, montant };
       }).filter((r) => r.sugg >= 1 || r.perso || r.inclus).sort((a, b) => (b.freq === "an" ? b.montant / 12 : b.montant) - (a.freq === "an" ? a.montant / 12 : a.montant));
       const courantesMois = depRows.reduce((s, r) => s + (r.inclus && r.freq === "mois" ? r.montant : 0), 0);
       const annuelles = depRows.filter((r) => r.inclus && r.freq === "an" && r.montant > 0);
       const courAnMoyen = annuelles.reduce((s, r) => s + r.montant, 0) / 12;
       const setCour = (cat, patch) => set({ courantes: { ...fc.courantes, [cat]: { ...(fc.courantes[cat] || {}), ...patch } } });
+      // Versements d'une dépense annuelle : le premier découpage partage le total en deux (mois choisi et 6 mois plus tard),
+      // les suivants ajoutent un versement vide à compléter
+      const ajouterVersement = (r) => {
+        if (!r.multi) {
+          const a = Math.round(r.montant / 2);
+          return setCour(r.cat, { echeances: [{ id: newId(), mois: r.mois, montant: a }, { id: newId(), mois: ((r.mois + 5) % 12) + 1, montant: Math.round(r.montant) - a }] });
+        }
+        const last = r.echs[r.echs.length - 1];
+        setCour(r.cat, { echeances: [...r.echs, { id: newId(), mois: (Number(last.mois) % 12) + 1, montant: "" }] });
+      };
+      const majVersement = (r, id, patch) => setCour(r.cat, { echeances: r.echs.map((e) => (e.id === id ? { ...e, ...patch } : e)) });
+      const supprVersement = (r, id) => {
+        const reste = r.echs.filter((e) => e.id !== id);
+        if (reste.length >= 2) return setCour(r.cat, { echeances: reste });
+        setCour(r.cat, { echeances: [], mois: Number(reste[0].mois), montant: reste[0].montant === "" ? "" : Number(reste[0].montant) });
+      };
       const toutCocher = (v) => set({ courantes: Object.fromEntries(depRows.map((r) => [r.cat, { ...(fc.courantes[r.cat] || {}), inclus: v }])) });
 
       // --- Plan mois par mois ---
       const mensuel = periodes.map((p) => {
         const rev = fc.revenus.map((l) => montantLigne(l, p));
         const dep = fc.depenses.map((l) => montantLigne(l, p));
-        const an = annuelles.map((r) => (Number(p.slice(5, 7)) === Number(r.mois) ? r.montant : 0));
+        const an = annuelles.map((r) => r.echs.reduce((s, e) => s + (Number(p.slice(5, 7)) === Number(e.mois) ? Number(e.montant) || 0 : 0), 0));
         const prevRev = rev.reduce((s, v) => s + v, 0);
         const prevDep = courantesMois + an.reduce((s, v) => s + v, 0) + dep.reduce((s, v) => s + v, 0);
         return { p, label: monthLabel(p), rev, dep, an, cour: courantesMois, prevRev, prevDep, flux: prevRev - prevDep };
@@ -4406,23 +4426,25 @@ Méthode de calcul de l'application :
                   <div className="flex-1 min-w-0" style={{ opacity: r.inclus ? 1 : 0.5 }}>
                     <div className="truncate" style={{ color: t.text }}>{r.cat}</div>
                     <div className="text-[11px]" style={{ color: t.textMuted, ...NUM }}>
-                      {r.source}{r.freq === "an" ? ` · payé une fois en ${MOIS_LONGS[r.mois - 1]}` : ""}
+                      {r.source}{r.freq !== "an" ? "" : r.multi ? ` · payé en ${r.echs.length} fois` : ` · payé une fois en ${MOIS_LONGS[r.mois - 1]}`}
                     </div>
                   </div>
                   <div className="flex flex-col items-end gap-1 shrink-0" style={{ opacity: r.inclus ? 1 : 0.5 }}>
                     <div className="flex items-center gap-1">
-                      <input type="number" inputMode="decimal" min="0" disabled={!r.inclus}
+                      {r.multi ? (
+                        <span className="w-24 px-2 py-1 text-sm text-right" style={{ color: t.text, ...NUM }} title="Somme des versements">{fmtEUR(r.montant)}</span>
+                      ) : <input type="number" inputMode="decimal" min="0" disabled={!r.inclus}
                         value={r.perso ? fc.courantes[r.cat].montant : ""} placeholder={String(Math.round(r.sugg))}
                         onChange={(e) => setCour(r.cat, { montant: e.target.value === "" ? "" : Number(e.target.value) })}
-                        className="w-24 rounded-lg px-2 py-1 text-sm text-right" style={{ ...input, ...NUM, borderColor: r.perso ? t.accent : t.border }} />
+                        className="w-24 rounded-lg px-2 py-1 text-sm text-right" style={{ ...input, ...NUM, borderColor: r.perso ? t.accent : t.border }} />}
                       {/* Changer de fréquence efface le montant saisi : il ne correspond plus (mensuel ≠ annuel) */}
-                      <select value={r.freq} disabled={!r.inclus} onChange={(e) => setCour(r.cat, { freq: e.target.value, montant: "" })}
+                      <select value={r.freq} disabled={!r.inclus} onChange={(e) => setCour(r.cat, { freq: e.target.value, montant: "", echeances: [] })}
                         className="rounded-lg px-1 py-1 text-xs" style={input}>
                         <option value="mois">€/mois</option>
                         <option value="an">€/an</option>
                       </select>
                     </div>
-                    {r.freq === "an" && (
+                    {r.freq === "an" && !r.multi && (
                       <label className="flex items-center gap-1 text-[11px]" style={{ color: t.textMuted }}>
                         payé en
                         <select value={r.mois} disabled={!r.inclus} onChange={(e) => setCour(r.cat, { mois: Number(e.target.value) })}
@@ -4430,6 +4452,23 @@ Méthode de calcul de l'application :
                           {MOIS_LONGS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
                         </select>
                       </label>
+                    )}
+                    {r.multi && r.echs.map((e) => (
+                      <div key={e.id} className="flex items-center gap-1 text-[11px]" style={{ color: t.textMuted }}>
+                        <select value={e.mois} disabled={!r.inclus} onChange={(ev) => majVersement(r, e.id, { mois: Number(ev.target.value) })}
+                          className="rounded-lg px-1 py-0.5 text-xs" style={input}>
+                          {MOIS_LONGS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+                        </select>
+                        <input type="number" inputMode="decimal" min="0" disabled={!r.inclus} value={e.montant} placeholder="0"
+                          onChange={(ev) => majVersement(r, e.id, { montant: ev.target.value === "" ? "" : Number(ev.target.value) })}
+                          className="w-20 rounded-lg px-1.5 py-0.5 text-xs text-right" style={{ ...input, ...NUM }} />
+                        <button onClick={() => supprVersement(r, e.id)} disabled={!r.inclus} title="Retirer ce versement" className="p-0.5" style={{ color: t.textMuted }}><X size={12} /></button>
+                      </div>
+                    ))}
+                    {r.freq === "an" && r.inclus && (
+                      <button onClick={() => ajouterVersement(r)} className="text-[11px] flex items-center gap-0.5" style={{ color: t.accent }}>
+                        <Plus size={11} /> {r.multi ? "Ajouter un versement" : "Payer en plusieurs fois"}
+                      </button>
                     )}
                   </div>
                 </div>
