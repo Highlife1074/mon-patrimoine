@@ -4195,7 +4195,7 @@ Méthode de calcul de l'application :
 
     const HORIZONS = [12, 24, 36, 60];
 
-    function ForecastTab({ months, limits, forecast, onChange, releve }) {
+    function ForecastTab({ months, limits, forecast, onChange, releve, onSetLimit }) {
       const t = useTheme();
       const isMobile = useIsMobile();
       const raw = forecast || {};
@@ -4264,6 +4264,14 @@ Méthode de calcul de l'application :
         const reste = r.echs.filter((e) => e.id !== id);
         if (reste.length >= 2) return setCour(r.cat, { echeances: reste });
         setCour(r.cat, { echeances: [], mois: Number(reste[0].mois), montant: reste[0].montant === "" ? "" : Number(reste[0].montant) });
+      };
+      // Les montants du prévisionnel deviennent les budgets (catégories cochées seulement ; les autres budgets restent tels quels)
+      const versBudgets = () => {
+        const aAppliquer = depRows.filter((r) => r.inclus && r.montant > 0);
+        if (!aAppliquer.length) return;
+        const detail = aAppliquer.map((r) => `• ${r.cat} : ${fmtEUR(r.montant)} ${r.freq === "an" ? "/ an" : "/ mois"}`).join("\n");
+        if (!window.confirm(`Remplacer les budgets de ${aAppliquer.length} catégorie(s) par les montants du prévisionnel ?\n\n${detail}\n\nLes catégories décochées gardent leur budget actuel.`)) return;
+        aAppliquer.forEach((r) => onSetLimit(r.cat, r.montant, r.freq === "an" ? "an" : "mois"));
       };
       const toutCocher = (v) => set({ courantes: Object.fromEntries(depRows.map((r) => [r.cat, { ...(fc.courantes[r.cat] || {}), inclus: v }])) });
 
@@ -4449,9 +4457,14 @@ Méthode de calcul de l'application :
 
           <Panel title="Dépenses courantes" subtitle="Cochez celles à compter, corrigez le montant si besoin (vide = montant suggéré). Une dépense « €/an » tombe en entier le mois choisi, sans être lissée."
             action={
-              <div className="flex gap-1 shrink-0">
+              <div className="flex flex-wrap justify-end gap-1 shrink-0">
                 <button onClick={() => toutCocher(true)} className="text-xs px-2 py-1 rounded-lg" style={btn}>Tout</button>
                 <button onClick={() => toutCocher(false)} className="text-xs px-2 py-1 rounded-lg" style={btn}>Aucune</button>
+                {onSetLimit && (
+                  <button onClick={versBudgets} title="Les montants cochés deviennent les budgets de l'onglet Budget" className="text-xs px-2 py-1 rounded-lg flex items-center gap-1" style={{ background: t.accent, color: t.onAccent }}>
+                    <Check size={12} /> {isMobile ? "En budgets" : "Utiliser comme budgets"}
+                  </button>
+                )}
               </div>
             }>
             <div className="space-y-0.5">
@@ -5253,7 +5266,7 @@ Méthode de calcul de l'application :
               )}
 
               {tab === "previsionnel" && (
-                <ForecastTab months={budgetMonths} limits={budgetLimits} forecast={forecast} onChange={setForecast} releve={lastMonthly} />
+                <ForecastTab months={budgetMonths} limits={budgetLimits} forecast={forecast} onChange={setForecast} releve={lastMonthly} onSetLimit={handleSetBudgetLimit} />
               )}
 
               {tab === "operations" && (
