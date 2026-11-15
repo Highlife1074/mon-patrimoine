@@ -423,11 +423,37 @@
       return tiers ? `tiers ${normTxt(tiers)}` : normTxt(desc);
     };
     // Virement vers / depuis un compte à vos noms (titulaires lus sur le relevé)
+    // Titulaires connus de l'app (déduits des comptes joints présents dans les opérations) : utilisés quand
+    // l'opération n'a pas ses propres titulaires (recalcul après suppression d'une règle ou d'une catégorie…)
+    const KNOWN_HOLDERS = [];
+    const HOLDER_STOP = new Set(["mme", "mlle", "mr", "monsieur", "madame", "ou", "et", "les"]);
+    function deriveHolders(transactions) {
+      const words = new Set();
+      transactions.forEach((tx) => {
+        const name = personOf(tx.desc) || lclCounterparty(tx.desc);
+        if (name && isJointAccount(name)) normTxt(name).split(" ").forEach((w) => w.length > 2 && !HOLDER_STOP.has(w) && words.add(w));
+      });
+      return [...words];
+    }
+    function setKnownHolders(list) { KNOWN_HOLDERS.splice(0, KNOWN_HOLDERS.length, ...list); }
     function isOwnTransfer(tx) {
       const tiers = lclCounterparty(tx.desc) || personOf(tx.desc);
-      if (!tiers || !tx.holders?.length) return false;
+      const holders = tx.holders?.length ? tx.holders : KNOWN_HOLDERS;
+      if (!tiers || !holders.length) return false;
+      if (isJointAccount(tiers)) return true;
       const words = normTxt(tiers).split(" ");
-      return words.filter((w) => tx.holders.includes(w)).length >= 2 || tx.holders.includes(words[0]);
+      return words.filter((w) => holders.includes(w)).length >= 2 || holders.includes(words[0]);
+    }
+    // Virements entre vos comptes classés ailleurs (hors choix manuels) : on les remet en « Virement interne »
+    function repairOwnTransfers(transactions, rules) {
+      let n = 0;
+      const out = transactions.map((tx) => {
+        if (tx.manual || !["Famille & proches", "Autres dépenses", "Autres revenus"].includes(tx.cat)) return tx;
+        if (!isOwnTransfer(tx) || categorizeTx(tx, rules) !== "Virement interne") return tx;
+        n++;
+        return { ...tx, cat: "Virement interne" };
+      });
+      return { out, n };
     }
 
     function categorizeTx(tx, rules) {
@@ -4631,6 +4657,7 @@ Méthode de calcul de l'application :
       const [forecast, setForecast] = useState({ revenus: [], depenses: [], inclureMoyennes: true });
       // Les catégories créées par l'utilisateur rejoignent la liste partagée avant tout calcul
       applyCustomCategories(customCats);
+      setKnownHolders(useMemo(() => deriveHolders(budgetTx), [budgetTx]));
       const [monthlyModalOpen, setMonthlyModalOpen] = useState(false);
       const [monthlyModalKey, setMonthlyModalKey] = useState(0);
       const [tab, setTab] = useState("dashboard");
@@ -4642,6 +4669,12 @@ Méthode de calcul de l'application :
 
       // Persistance Firebase
       const [loaded, setLoaded] = useState(false);
+      // Réparation : virements entre vos comptes mal classés (ex. après une suppression de règle sans titulaires connus)
+      useEffect(() => {
+        if (!loaded) return;
+        const { out, n } = repairOwnTransfers(budgetTx, budgetRules);
+        if (n) setBudgetTx(out);
+      }, [budgetTx, budgetRules, loaded]);
       // Lecture Firebase échouée : on n'affiche pas l'application et on n'enregistre RIEN,
       // sinon l'état vide par défaut écraserait le document sauvegardé
       const [loadError, setLoadError] = useState("");
