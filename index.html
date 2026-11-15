@@ -4102,179 +4102,369 @@ Méthode de calcul de l'application :
       );
     }
 
-    // ================== ONGLET PRÉVISIONNEL ==================
-    const annualise = (montant, periode) => (periode === "an" ? montant : montant * 12);
+    // ================== ONGLET PRÉVISIONNEL (plan de trésorerie) ==================
     const newId = () => Math.random().toString(36).slice(2, 9);
+    const MOIS_COURTS = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
+    const MOIS_LONGS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+    const FREQS = [
+      { id: "mois", label: "Chaque mois" },
+      { id: "trimestre", label: "Chaque trimestre" },
+      { id: "an", label: "Une fois par an" },
+      { id: "once", label: "Une seule fois" },
+    ];
+    const periodeIndex = (p) => Number(p.slice(0, 4)) * 12 + Number(p.slice(5, 7)) - 1;
+    const addMois = (p, n) => { const i = periodeIndex(p) + n; return `${Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, "0")}`; };
+
+    // Ligne du plan : { id, label, montant, freq, mois (1-12, pour « une fois par an »), debut, fin ("AAAA-MM" ou ""), cat (dépenses) }
+    // Les anciennes lignes { periode: "mois" | "an" } deviennent « chaque mois » / « une fois par an en décembre ».
+    const normLigne = (l) => ({
+      id: l.id || newId(), label: l.label || "", montant: l.montant ?? "",
+      freq: l.freq || (l.periode === "an" ? "an" : "mois"),
+      mois: l.mois || 12, debut: l.debut || "", fin: l.fin || "", cat: l.cat || "",
+    });
+
+    // Montant d'une ligne pour un mois donné (0 si hors période ou hors échéance)
+    function montantLigne(l, p) {
+      const v = Number(l.montant) || 0;
+      if (!v) return 0;
+      if (l.freq === "once") return l.debut === p ? v : 0;
+      if (l.debut && p < l.debut) return 0;
+      if (l.fin && p > l.fin) return 0;
+      if (l.freq === "an") return Number(p.slice(5, 7)) === Number(l.mois) ? v : 0;
+      if (l.freq === "trimestre") {
+        const ref = l.debut || `${p.slice(0, 4)}-01`;
+        return (periodeIndex(p) - periodeIndex(ref)) % 3 === 0 ? v : 0;
+      }
+      return v;
+    }
+
+    function resumeLigne(l) {
+      const v = fmtEUR(Number(l.montant) || 0);
+      const du = l.debut ? monthLong(l.debut) : null, au = l.fin ? monthLong(l.fin) : null;
+      const bornes = du && au ? ` de ${du} à ${au}` : du ? ` à partir de ${du}` : au ? ` jusqu'à ${au}` : "";
+      if (l.freq === "once") return du ? `${v} en ${du}` : "Choisissez le mois";
+      if (l.freq === "an") return `${v} chaque ${MOIS_LONGS[(l.mois || 12) - 1]}${bornes}`;
+      if (l.freq === "trimestre") return `${v} par trimestre${bornes}`;
+      return `${v} / mois${bornes}`;
+    }
+
+    // Sélecteur de mois : une liste déroulante (plus fiable que <input type="month"> sur tous les navigateurs)
+    function MonthSelect({ value, onChange, empty, style }) {
+      const y = Number(moisCourant().slice(0, 4));
+      const opts = [];
+      for (let a = y - 2; a <= y + 6; a++) for (let m = 1; m <= 12; m++) opts.push(`${a}-${String(m).padStart(2, "0")}`);
+      if (value && !opts.includes(value)) opts.unshift(value);
+      return (
+        <select value={value || ""} onChange={(e) => onChange(e.target.value)} className="rounded-lg px-1.5 py-1.5 text-xs" style={style}>
+          <option value="">{empty}</option>
+          {opts.map((p) => <option key={p} value={p}>{MOIS_COURTS[Number(p.slice(5, 7)) - 1]} {p.slice(0, 4)}</option>)}
+        </select>
+      );
+    }
+
+    function PlanLine({ l, depense, onUpd, onDel }) {
+      const t = useTheme();
+      const input = { background: t.panel, color: t.text, border: `1px solid ${t.border}` };
+      const lab = "text-[11px] flex items-center gap-1";
+      return (
+        <div className="rounded-xl p-2.5 space-y-2" style={{ background: t.panelAlt, border: `1px solid ${t.border}` }}>
+          <div className="flex items-center gap-2">
+            <input value={l.label} onChange={(e) => onUpd({ label: e.target.value })} placeholder={depense ? "Ex. : taxe foncière" : "Ex. : salaire Philippe"}
+              className="flex-1 min-w-0 rounded-lg px-3 py-1.5 text-sm" style={input} />
+            <input type="number" inputMode="decimal" min="0" value={l.montant} onChange={(e) => onUpd({ montant: e.target.value === "" ? "" : Number(e.target.value) })}
+              placeholder="€" className="w-24 md:w-28 rounded-lg px-2 py-1.5 text-sm text-right" style={{ ...input, ...NUM }} />
+            <button onClick={onDel} title="Supprimer" className="p-1 rounded shrink-0" style={{ color: t.textMuted }}><X size={14} /></button>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5" style={{ color: t.textMuted }}>
+            <select value={l.freq} onChange={(e) => onUpd({ freq: e.target.value })} className="rounded-lg px-1.5 py-1.5 text-xs" style={input}>
+              {FREQS.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+            </select>
+            {l.freq === "an" && (
+              <label className={lab}>en
+                <select value={l.mois} onChange={(e) => onUpd({ mois: Number(e.target.value) })} className="rounded-lg px-1.5 py-1.5 text-xs" style={input}>
+                  {MOIS_LONGS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+                </select>
+              </label>
+            )}
+            {l.freq === "once" ? (
+              <label className={lab}>en <MonthSelect value={l.debut} onChange={(v) => onUpd({ debut: v })} empty="— mois —" style={input} /></label>
+            ) : (
+              <>
+                <label className={lab}>du <MonthSelect value={l.debut} onChange={(v) => onUpd({ debut: v })} empty="toujours" style={input} /></label>
+                <label className={lab}>au <MonthSelect value={l.fin} onChange={(v) => onUpd({ fin: v })} empty="sans fin" style={input} /></label>
+              </>
+            )}
+            {depense && (
+              <label className={lab} title="Si une catégorie est choisie, son budget n'est plus compté dans les dépenses courantes : cette ligne le remplace.">
+                remplace
+                <select value={l.cat} onChange={(e) => onUpd({ cat: e.target.value })} className="rounded-lg px-1.5 py-1.5 text-xs max-w-[150px]" style={input}>
+                  <option value="">— rien (en plus) —</option>
+                  {BUDGET_CATEGORIES.filter((c) => c.kind === "depense").map((c) => <option key={c.id} value={c.id}>{c.id}</option>)}
+                </select>
+              </label>
+            )}
+          </div>
+          <div className="text-[11px]" style={{ color: t.textMuted }}>{resumeLigne(l)}</div>
+        </div>
+      );
+    }
 
     function ForecastTab({ months, limits, forecast, onChange }) {
       const t = useTheme();
       const isMobile = useIsMobile();
-      const fc = { revenus: [], inclureMoyennes: true, ...(forecast || {}) };
+      const raw = forecast || {};
+      const fc = {
+        inclureMoyennes: true, inclureBudgets: true, soldeInitial: "", reelPasse: true, ...raw,
+        revenus: (raw.revenus || []).map(normLigne), depenses: (raw.depenses || []).map(normLigne),
+      };
       const set = (patch) => onChange({ ...fc, ...patch });
-      const years = [...new Set([...months.map((m) => m.periode.slice(0, 4)), moisCourant().slice(0, 4)])].sort();
-      const [annee, setAnnee] = useState(moisCourant().slice(0, 4));
       const cur = moisCourant();
       const input = { background: t.panel, color: t.text, border: `1px solid ${t.border}` };
+      const btn = { border: `1px solid ${t.border}`, color: t.text, background: t.panelAlt };
 
-      // Moyennes sur les 12 derniers mois terminés (servent au pré-remplissage et aux catégories sans budget)
+      // Période affichée : une année civile ou les 12 prochains mois
+      const years = [...new Set([...months.map((m) => m.periode.slice(0, 4)), cur.slice(0, 4), String(Number(cur.slice(0, 4)) + 1)])].sort();
+      const [vue, setVue] = useState(cur.slice(0, 4));
+      const debutVue = vue === "glissant" ? cur : `${vue}-01`;
+      const periodes = Array.from({ length: 12 }, (_, i) => addMois(debutVue, i));
+
+      // Moyennes sur les 12 derniers mois terminés (pré-remplissage et catégories sans budget)
       const last12 = months.filter((m) => m.periode < cur).slice(-12);
       const avg = (fn) => (last12.length ? last12.reduce((s, m) => s + fn(m), 0) / last12.length : 0);
 
-      // --- Revenus prévus ---
-      const revenusAn = fc.revenus.reduce((s, r) => s + annualise(Number(r.montant) || 0, r.periode), 0);
-      const updRev = (id, patch) => set({ revenus: fc.revenus.map((r) => (r.id === id ? { ...r, ...patch } : r)) });
-      const prefill = () => {
-        const lignes = [];
-        // Seuls les salaires sont pré-remplis : les « autres revenus » mêlent des rentrées exceptionnelles
-        // (dividendes, indemnités, remboursements) qui fausseraient la projection.
-        const sal = avg((m) => m.salaire);
-        if (sal >= 1) lignes.push({ id: newId(), label: "Salaires (moyenne des 12 derniers mois)", montant: Math.round(sal), periode: "mois" });
-        set({ revenus: [...fc.revenus, ...lignes] });
-      };
-
-      // --- Dépenses prévues : budgets, puis moyenne pour les catégories sans budget ---
+      // --- Dépenses courantes : budgets (ou moyennes), sauf catégories remplacées par une ligne du plan ---
+      const remplacees = new Set(fc.depenses.map((l) => l.cat).filter(Boolean));
       const depRows = BUDGET_CATEGORIES.filter((c) => c.kind === "depense").map((c) => {
         const L = getLimit(limits, c.id);
-        const moy = avg((m) => depenseCat(m, c.id)) * 12;
-        if (L) return { cat: c.id, an: L.annual ? L.amount : L.amount * 12, source: L.annual ? "budget annuel" : `budget ${fmtEUR(L.amount)}/mois`, moy };
-        if (fc.inclureMoyennes && moy >= 1) return { cat: c.id, an: moy, source: "moyenne des relevés", moy };
-        return { cat: c.id, an: 0, source: "non prévu", moy };
-      }).filter((r) => r.an > 0 || r.moy >= 1).sort((a, b) => b.an - a.an);
-      const depensesAn = depRows.reduce((s, r) => s + r.an, 0);
-      const epargneAn = revenusAn - depensesAn;
-      const taux = revenusAn > 0 ? epargneAn / revenusAn : null;
+        const moy = avg((m) => depenseCat(m, c.id));
+        if (remplacees.has(c.id)) return { cat: c.id, mois: 0, source: "remplacé par le plan", moy };
+        if (L) return { cat: c.id, mois: L.annual ? L.amount / 12 : L.amount, source: L.annual ? `budget ${fmtEUR(L.amount)}/an` : "budget mensuel", moy };
+        if (fc.inclureMoyennes && moy >= 1) return { cat: c.id, mois: moy, source: "moyenne des relevés", moy };
+        return { cat: c.id, mois: 0, source: "non prévu", moy };
+      }).filter((r) => r.mois > 0 || r.moy >= 1).sort((a, b) => b.mois - a.mois);
+      const courantesMois = fc.inclureBudgets ? depRows.reduce((s, r) => s + r.mois, 0) : 0;
 
-      // --- Réel de l'année choisie comparé au prévu (au prorata des mois écoulés) ---
-      const yMonths = months.filter((m) => m.periode.startsWith(annee) && m.periode < cur);
-      const n = yMonths.length;
-      const reelRev = yMonths.reduce((s, m) => s + m.revenus, 0);
-      const reelDep = yMonths.reduce((s, m) => s + m.depenses, 0);
-      const prevRev = (revenusAn / 12) * n, prevDep = (depensesAn / 12) * n;
-      const restant = annee < cur.slice(0, 4) ? 0 : annee > cur.slice(0, 4) ? 12 : 12 - n;
-      const projRev = reelRev + (revenusAn / 12) * restant;
-      const projDep = reelDep + (depensesAn / 12) * restant;
-      // Courbe : écart cumulé (revenus − dépenses) réel et prévu, mois par mois
-      const courbe = Array.from({ length: 12 }, (_, i) => {
-        const p = `${annee}-${String(i + 1).padStart(2, "0")}`;
-        return { periode: p, prevu: Math.round((epargneAn / 12) * (i + 1)) };
+      // --- Plan mois par mois ---
+      const byP = new Map(months.map((m) => [m.periode, m]));
+      const cols = periodes.map((p) => {
+        const rev = fc.revenus.map((l) => montantLigne(l, p));
+        const dep = fc.depenses.map((l) => montantLigne(l, p));
+        const prevRev = rev.reduce((s, v) => s + v, 0);
+        const prevDep = courantesMois + dep.reduce((s, v) => s + v, 0);
+        const m = p < cur ? byP.get(p) : null;
+        const reel = m ? { rev: m.revenus, dep: m.depenses } : null;
+        const useReel = !!(reel && fc.reelPasse);
+        return { p, rev, dep, prevRev, prevDep, reel, useReel, flux: useReel ? reel.rev - reel.dep : prevRev - prevDep };
       });
-      let cumul = 0;
-      courbe.forEach((pt) => {
-        const m = yMonths.find((x) => x.periode === pt.periode);
-        if (m) { cumul += m.solde; pt.reel = Math.round(cumul); }
-      });
+      let treso = Number(fc.soldeInitial) || 0;
+      cols.forEach((c) => { treso += c.flux; c.treso = treso; });
+      const sum = (fn) => cols.reduce((s, c) => s + fn(c), 0);
+      const totRev = sum((c) => c.prevRev), totDep = sum((c) => c.prevDep);
+      const nReel = cols.filter((c) => c.reel).length;
+      const projRev = sum((c) => (c.useReel ? c.reel.rev : c.prevRev));
+      const projDep = sum((c) => (c.useReel ? c.reel.dep : c.prevDep));
+      const minTreso = cols.reduce((a, c) => (c.treso < a.treso ? c : a), cols[0]);
+      const libVue = vue === "glissant" ? "12 prochains mois" : vue;
 
-      const ecart = (reel, prevu, sensDepense) => {
-        const d = reel - prevu;
-        const bon = sensDepense ? d <= 0 : d >= 0;
-        return <span style={{ color: bon ? t.gain : t.loss, ...NUM }}>{d >= 0 ? "+" : "−"}{fmtEUR(Math.abs(d))}</span>;
+      // --- Édition des lignes ---
+      const updL = (kind, id, patch) => set({ [kind]: fc[kind].map((l) => (l.id === id ? { ...l, ...patch } : l)) });
+      const delL = (kind, id) => set({ [kind]: fc[kind].filter((l) => l.id !== id) });
+      const addL = (kind, preset = {}) => set({ [kind]: [...fc[kind], normLigne({ freq: "mois", ...preset })] });
+      const prefill = () => {
+        const sal = avg((m) => m.salaire);
+        if (sal >= 1) addL("revenus", { label: "Salaires (moyenne des 12 derniers mois)", montant: Math.round(sal) });
       };
+
+      // --- Tableau du plan de trésorerie ---
+      const cell = "py-1.5 px-2 text-right whitespace-nowrap";
+      const sticky = { position: "sticky", left: 0, background: t.panel, zIndex: 1 };
+      const colBg = (c) => (c.reel ? { background: `${t.accent}0d` } : {});
+      const v0 = (v) => (Math.abs(v) < 0.5 ? <span style={{ color: t.textMuted, opacity: 0.5 }}>·</span> : fmtEUR(v));
+      const Row = ({ label, vals, total, bold, color, muted, top }) => (
+        <tr style={{ borderTop: top ? `1px solid ${t.border}` : undefined }}>
+          <td className="py-1.5 pr-3 text-left max-w-[180px] truncate" style={{ ...sticky, color: muted ? t.textMuted : t.text, fontWeight: bold ? 600 : 400 }} title={label}>{label}</td>
+          {vals.map((v, i) => <td key={i} className={cell} style={{ ...colBg(cols[i]), color: color ? color(v) : muted ? t.textMuted : t.text, fontWeight: bold ? 600 : 400 }}>{v === null ? "" : v0(v)}</td>)}
+          <td className={cell} style={{ color: muted ? t.textMuted : t.text, fontWeight: 600 }}>{total === null || total === undefined ? "" : fmtEUR(total)}</td>
+        </tr>
+      );
+      const Section = ({ label }) => (
+        <tr><td colSpan={14} className="pt-3 pb-1 text-[11px] uppercase tracking-wide font-semibold text-left" style={{ ...sticky, color: t.textMuted }}>{label}</td></tr>
+      );
+      const signColor = (v) => (v >= 0 ? t.gain : t.loss);
+
+      const chartData = cols.map((c) => ({ periode: c.p, revenus: Math.round(c.useReel ? c.reel.rev : c.prevRev), depenses: -Math.round(c.useReel ? c.reel.dep : c.prevDep), treso: Math.round(c.treso), reel: c.useReel }));
 
       return (
         <div className="space-y-3 md:space-y-5">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-            <KPICard icon={Briefcase} label="Revenus estimés / an" value={fmtEUR(revenusAn)} sub={`${fmtEUR(revenusAn / 12)} / mois`} />
-            <KPICard icon={ArrowDownRight} label="Dépenses prévues / an" value={fmtEUR(depensesAn)} sub={`${fmtEUR(depensesAn / 12)} / mois`} />
-            <KPICard icon={PiggyBank} label="Épargne possible / an" value={signed(epargneAn)} tone={epargneAn >= 0 ? "up" : "down"}
-              sub={taux !== null ? `${Math.round(taux * 100)} % des revenus · ${fmtEUR(epargneAn / 12)} / mois` : "Saisissez vos revenus"} />
-            <KPICard icon={TrendingUp} label={`Projection fin ${annee}`} value={signed(projRev - projDep)} tone={projRev - projDep >= 0 ? "up" : "down"}
-              sub={n ? `${n} mois réels + ${restant} mois prévus` : "Prévu seul (aucun mois terminé)"} />
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-sm" style={{ color: t.textMuted }}>Période</span>
+              <select value={vue} onChange={(e) => setVue(e.target.value)} className="rounded-lg px-2 py-1.5 text-sm" style={input}>
+                <option value="glissant">12 prochains mois</option>
+                {years.map((y) => <option key={y} value={y}>{y}</option>)}
+              </select>
+            </div>
+            <label className="flex items-center gap-2 text-sm" style={{ color: t.textMuted }}>
+              Trésorerie au début
+              <input type="number" inputMode="decimal" value={fc.soldeInitial} onChange={(e) => set({ soldeInitial: e.target.value === "" ? "" : Number(e.target.value) })}
+                placeholder="0" className="w-28 rounded-lg px-2 py-1.5 text-sm text-right" style={{ ...input, ...NUM }} />
+            </label>
           </div>
 
-          <Panel title="Revenus estimés" subtitle="Salaires, allocations (CAF)… par mois ; primes, bonus, 13e mois par an. Le pré-remplissage ne reprend que vos salaires moyens."
-            action={<button onClick={prefill} className="text-xs px-2.5 py-1 rounded-lg shrink-0" style={{ border: `1px solid ${t.border}`, color: t.text, background: t.panelAlt }}>Pré-remplir avec mes relevés</button>}>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+            <KPICard icon={Briefcase} label={`Revenus prévus · ${libVue}`} value={fmtEUR(totRev)} sub={`${fmtEUR(totRev / 12)} / mois en moyenne`} />
+            <KPICard icon={ArrowDownRight} label={`Dépenses prévues · ${libVue}`} value={fmtEUR(totDep)} sub={`${fmtEUR(totDep / 12)} / mois en moyenne`} />
+            <KPICard icon={PiggyBank} label="Épargne prévue" value={signed(totRev - totDep)} tone={totRev - totDep >= 0 ? "up" : "down"}
+              sub={totRev > 0 ? `${Math.round(((totRev - totDep) / totRev) * 100)} % des revenus` : "Saisissez vos revenus"} />
+            <KPICard icon={TrendingUp} label={`Trésorerie fin ${monthLabel(periodes[11])}`} value={fmtEUR(cols[11].treso)} tone={cols[11].treso >= 0 ? "up" : "down"}
+              sub={minTreso.treso < 0 ? `Passe sous zéro en ${monthLong(minTreso.p)} (${fmtEUR(minTreso.treso)})` : nReel && fc.reelPasse ? `${nReel} mois réels + ${12 - nReel} prévus` : `Point bas : ${fmtEUR(minTreso.treso)} (${monthLabel(minTreso.p)})`} />
+          </div>
+
+          <Panel title={`Plan de trésorerie — ${libVue}`}
+            subtitle={nReel ? `Colonnes teintées : mois terminés${fc.reelPasse ? ", la trésorerie y suit le réel" : ""}` : "Montants prévus mois par mois"}
+            action={nReel > 0 && (
+              <label className="flex items-center gap-1.5 text-xs shrink-0 cursor-pointer" style={{ color: t.textMuted }}>
+                <input type="checkbox" checked={fc.reelPasse} onChange={(e) => set({ reelPasse: e.target.checked })} />
+                {isMobile ? "Réel pour le passé" : "Utiliser le réel pour les mois passés"}
+              </label>
+            )}>
+            <div className="overflow-x-auto -mx-1 px-1">
+              <table className="w-full text-xs md:text-sm" style={{ ...NUM, borderCollapse: "collapse" }}>
+                <thead>
+                  <tr className="text-xs" style={{ color: t.textMuted }}>
+                    <th className="text-left font-medium py-1.5" style={sticky}></th>
+                    {cols.map((c) => <th key={c.p} className="text-right font-medium py-1.5 px-2 whitespace-nowrap" style={colBg(c)}>{monthLabel(c.p)}</th>)}
+                    <th className="text-right font-medium py-1.5 px-2">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <Section label="Revenus" />
+                  {fc.revenus.map((l, i) => <Row key={l.id} label={l.label || "Revenu sans nom"} vals={cols.map((c) => c.rev[i])} total={sum((c) => c.rev[i])} />)}
+                  <Row label="Total revenus prévus" vals={cols.map((c) => c.prevRev)} total={totRev} bold top />
+                  {nReel > 0 && <Row label="Revenus réels" vals={cols.map((c) => (c.reel ? c.reel.rev : null))} total={sum((c) => (c.reel ? c.reel.rev : 0))} muted />}
+                  <Section label="Dépenses" />
+                  {fc.inclureBudgets && <Row label="Dépenses courantes (budgets)" vals={cols.map(() => courantesMois)} total={courantesMois * 12} />}
+                  {fc.depenses.map((l, i) => <Row key={l.id} label={l.label || "Dépense sans nom"} vals={cols.map((c) => c.dep[i])} total={sum((c) => c.dep[i])} />)}
+                  <Row label="Total dépenses prévues" vals={cols.map((c) => c.prevDep)} total={totDep} bold top />
+                  {nReel > 0 && <Row label="Dépenses réelles" vals={cols.map((c) => (c.reel ? c.reel.dep : null))} total={sum((c) => (c.reel ? c.reel.dep : 0))} muted />}
+                  <Section label="Trésorerie" />
+                  <Row label="Solde du mois" vals={cols.map((c) => c.flux)} total={sum((c) => c.flux)} color={signColor} bold />
+                  <Row label="Trésorerie fin de mois" vals={cols.map((c) => c.treso)} total={null} color={signColor} bold top />
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+
+          <Panel title="Évolution de la trésorerie" subtitle="Entrées, sorties et trésorerie cumulée en fin de mois">
+            <ChartLegend items={[{ label: "Revenus", color: t.gain }, { label: "Dépenses", color: t.loss }, { label: "Trésorerie", color: t.s1 }]} />
+            <ResponsiveContainer width="100%" height={isMobile ? 220 : 280}>
+              <ComposedChart data={chartData} stackOffset="sign" margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barCategoryGap="25%">
+                <CartesianGrid stroke={t.border} vertical={false} />
+                <XAxis dataKey="periode" tickFormatter={monthLabel} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} minTickGap={8} />
+                <YAxis tickFormatter={(v) => `${Math.round(v / 1000)}k`} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} width={44} />
+                <ReferenceLine y={0} stroke={t.textMuted} strokeOpacity={0.6} />
+                <Tooltip contentStyle={tooltipStyle(t)} labelFormatter={(p) => monthLong(p)}
+                  formatter={(v, k) => [fmtEUR(k === "depenses" ? -v : v), k === "revenus" ? "Revenus" : k === "depenses" ? "Dépenses" : "Trésorerie"]} />
+                <Bar dataKey="revenus" stackId="f" fill={t.gain} fillOpacity={0.75} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+                <Bar dataKey="depenses" stackId="f" fill={t.loss} fillOpacity={0.75} radius={[0, 0, 3, 3]} isAnimationActive={false} />
+                <Line dataKey="treso" stroke={t.s1} strokeWidth={2} dot={{ r: 3, fill: t.s1, stroke: t.panel, strokeWidth: 2 }} isAnimationActive={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </Panel>
+
+          <Panel title="Revenus prévus" subtitle="Chaque ligne a son montant, sa fréquence et ses dates : un salaire jusqu'en juin puis un autre à partir de juillet, une prime chaque mars, un versement ponctuel…"
+            action={<button onClick={prefill} className="text-xs px-2.5 py-1 rounded-lg shrink-0" style={btn}>{isMobile ? "Pré-remplir" : "Pré-remplir avec mes relevés"}</button>}>
             <div className="space-y-2">
-              {fc.revenus.length === 0 && <p className="text-sm" style={{ color: t.textMuted }}>Aucun revenu saisi. Ajoutez une ligne ou pré-remplissez avec la moyenne de vos relevés.</p>}
-              {fc.revenus.map((r) => (
-                <div key={r.id} className="flex flex-wrap items-center gap-2">
-                  <input value={r.label} onChange={(e) => updRev(r.id, { label: e.target.value })} placeholder="Ex. : salaire Philippe"
-                    className="flex-1 min-w-[160px] rounded-lg px-3 py-1.5 text-sm" style={input} />
-                  <input type="number" inputMode="decimal" min="0" value={r.montant} onChange={(e) => updRev(r.id, { montant: e.target.value === "" ? "" : Number(e.target.value) })}
-                    className="w-28 rounded-lg px-2 py-1.5 text-sm text-right" style={{ ...input, ...NUM }} />
-                  <select value={r.periode} onChange={(e) => updRev(r.id, { periode: e.target.value })} className="rounded-lg px-1.5 py-1.5 text-xs" style={input}>
-                    <option value="mois">€ / mois</option>
-                    <option value="an">€ / an</option>
-                  </select>
-                  <span className="text-xs w-24 text-right" style={{ color: t.textMuted, ...NUM }}>{fmtEUR(annualise(Number(r.montant) || 0, r.periode))}/an</span>
-                  <button onClick={() => set({ revenus: fc.revenus.filter((x) => x.id !== r.id) })} title="Supprimer" className="p-1 rounded" style={{ color: t.textMuted }}><X size={14} /></button>
-                </div>
-              ))}
-              <button onClick={() => set({ revenus: [...fc.revenus, { id: newId(), label: "", montant: "", periode: "mois" }] })}
-                className="text-sm px-3 py-1.5 rounded-lg flex items-center gap-1.5" style={{ background: t.accent, color: t.onAccent }}>
+              {fc.revenus.length === 0 && <p className="text-sm" style={{ color: t.textMuted }}>Aucun revenu saisi.</p>}
+              {fc.revenus.map((l) => <PlanLine key={l.id} l={l} onUpd={(p) => updL("revenus", l.id, p)} onDel={() => delL("revenus", l.id)} />)}
+              <button onClick={() => addL("revenus")} className="text-sm px-3 py-1.5 rounded-lg flex items-center gap-1.5" style={{ background: t.accent, color: t.onAccent }}>
                 <Plus size={14} /> Ajouter un revenu
               </button>
             </div>
           </Panel>
 
-          <Panel title="Dépenses prévues" subtitle="Vos budgets (onglet Budget → Budgets), ramenés à l'année"
-            action={
-              <label className="flex items-center gap-1.5 text-xs shrink-0 cursor-pointer" style={{ color: t.textMuted }}>
-                <input type="checkbox" checked={fc.inclureMoyennes} onChange={(e) => set({ inclureMoyennes: e.target.checked })} />
-                {isMobile ? "Sans budget : moyenne" : "Catégories sans budget : compter leur moyenne"}
-              </label>
-            }>
-            <div className="space-y-1">
-              {depRows.map((r) => (
-                <div key={r.cat} className="flex items-center justify-between gap-3 text-sm py-1" style={{ borderBottom: `1px solid ${t.border}` }}>
-                  <span style={{ color: r.an ? t.text : t.textMuted }}>{r.cat} <span className="text-xs" style={{ color: t.textMuted }}>· {r.source}</span></span>
-                  <span className="shrink-0 text-right" style={{ ...NUM, color: r.an ? t.text : t.textMuted }}>
-                    {fmtEUR(r.an)}/an
-                    {!isMobile && r.source !== "moyenne des relevés" && r.moy >= 1 && <span className="text-xs" style={{ color: t.textMuted }}> · réel moyen {fmtEUR(r.moy)}/an</span>}
-                  </span>
-                </div>
-              ))}
-              <div className="flex justify-between text-sm font-semibold pt-2" style={{ color: t.text, ...NUM }}>
-                <span>Total</span><span>{fmtEUR(depensesAn)}/an · {fmtEUR(depensesAn / 12)}/mois</span>
+          <Panel title="Dépenses planifiées" subtitle="Dépenses à date précise : taxe foncière en octobre, assurance annuelle en mars, travaux, crédit qui se termine… Choisissez « remplace » pour qu'une ligne prenne la place du budget d'une catégorie.">
+            <div className="space-y-2">
+              {fc.depenses.length === 0 && <p className="text-sm" style={{ color: t.textMuted }}>Aucune dépense planifiée.</p>}
+              {fc.depenses.map((l) => <PlanLine key={l.id} l={l} depense onUpd={(p) => updL("depenses", l.id, p)} onDel={() => delL("depenses", l.id)} />)}
+              <div className="flex flex-wrap gap-2">
+                <button onClick={() => addL("depenses", { freq: "an", mois: Number(cur.slice(5, 7)) })} className="text-sm px-3 py-1.5 rounded-lg flex items-center gap-1.5" style={{ background: t.accent, color: t.onAccent }}>
+                  <Plus size={14} /> Dépense annuelle
+                </button>
+                <button onClick={() => addL("depenses", { freq: "once", debut: cur })} className="text-sm px-3 py-1.5 rounded-lg flex items-center gap-1.5" style={btn}>
+                  <Plus size={14} /> Ponctuelle
+                </button>
+                <button onClick={() => addL("depenses")} className="text-sm px-3 py-1.5 rounded-lg flex items-center gap-1.5" style={btn}>
+                  <Plus size={14} /> Mensuelle
+                </button>
               </div>
             </div>
           </Panel>
 
-          <Panel title={`Prévu et réel — ${annee}`} subtitle={n ? `Comparaison sur les ${n} mois terminés de ${annee}` : "Aucun mois terminé pour cette année"}
+          <Panel title="Dépenses courantes" subtitle={`Vos budgets (onglet Budget → Budgets), lissés chaque mois : ${fmtEUR(courantesMois)} / mois`}
+            collapsible defaultCollapsed={isMobile}
             action={
-              <select value={annee} onChange={(e) => setAnnee(e.target.value)} className="rounded-lg px-2 py-1.5 text-sm shrink-0" style={input}>
-                {years.map((y) => <option key={y} value={y}>{y}</option>)}
-              </select>
+              <div className="flex flex-col items-end gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                <label className="flex items-center gap-1.5 text-xs cursor-pointer" style={{ color: t.textMuted }}>
+                  <input type="checkbox" checked={fc.inclureBudgets} onChange={(e) => set({ inclureBudgets: e.target.checked })} /> Compter dans le plan
+                </label>
+                <label className="flex items-center gap-1.5 text-xs cursor-pointer" style={{ color: t.textMuted }}>
+                  <input type="checkbox" checked={fc.inclureMoyennes} onChange={(e) => set({ inclureMoyennes: e.target.checked })} />
+                  {isMobile ? "Sans budget : moyenne" : "Catégories sans budget : leur moyenne"}
+                </label>
+              </div>
             }>
-            {n > 0 && (
-              <div className="overflow-x-auto mb-4">
+            <div className="space-y-1" style={{ opacity: fc.inclureBudgets ? 1 : 0.5 }}>
+              {depRows.map((r) => (
+                <div key={r.cat} className="flex items-center justify-between gap-3 text-sm py-1" style={{ borderBottom: `1px solid ${t.border}` }}>
+                  <span style={{ color: r.mois ? t.text : t.textMuted }}>{r.cat} <span className="text-xs" style={{ color: t.textMuted }}>· {r.source}</span></span>
+                  <span className="shrink-0 text-right" style={{ ...NUM, color: r.mois ? t.text : t.textMuted }}>
+                    {fmtEUR(r.mois)}/mois
+                    {!isMobile && r.source !== "moyenne des relevés" && r.moy >= 1 && <span className="text-xs" style={{ color: t.textMuted }}> · réel moyen {fmtEUR(r.moy)}/mois</span>}
+                  </span>
+                </div>
+              ))}
+              <div className="flex justify-between text-sm font-semibold pt-2" style={{ color: t.text, ...NUM }}>
+                <span>Total</span><span>{fmtEUR(courantesMois)}/mois · {fmtEUR(courantesMois * 12)}/an</span>
+              </div>
+            </div>
+          </Panel>
+
+          {nReel > 0 && (
+            <Panel title="Prévu et réel" subtitle={`Sur les ${nReel} mois terminés de la période`}>
+              <div className="overflow-x-auto">
                 <table className="w-full text-sm" style={{ ...NUM, borderCollapse: "collapse" }}>
                   <thead>
                     <tr style={{ color: t.textMuted }} className="text-xs">
-                      <th className="text-left font-medium py-1.5">Sur {n} mois</th>
+                      <th className="text-left font-medium py-1.5">Sur {nReel} mois</th>
                       <th className="text-right font-medium py-1.5 px-2">Prévu</th>
                       <th className="text-right font-medium py-1.5 px-2">Réel</th>
                       <th className="text-right font-medium py-1.5 px-2">Écart</th>
-                      {!isMobile && <th className="text-right font-medium py-1.5 pl-2">Projection fin d'année</th>}
+                      {!isMobile && <th className="text-right font-medium py-1.5 pl-2">Projection {libVue}</th>}
                     </tr>
                   </thead>
                   <tbody>
-                    {[["Revenus", prevRev, reelRev, false, projRev], ["Dépenses", prevDep, reelDep, true, projDep], ["Épargne (revenus − dépenses)", prevRev - prevDep, reelRev - reelDep, false, projRev - projDep]].map(([l, p, r, dep, proj]) => (
-                      <tr key={l} style={{ borderTop: `1px solid ${t.border}` }}>
-                        <td className="py-1.5" style={{ color: t.text }}>{l}</td>
-                        <td className="py-1.5 px-2 text-right" style={{ color: t.textMuted }}>{fmtEUR(p)}</td>
-                        <td className="py-1.5 px-2 text-right" style={{ color: t.text }}>{fmtEUR(r)}</td>
-                        <td className="py-1.5 px-2 text-right">{ecart(r, p, dep)}</td>
-                        {!isMobile && <td className="py-1.5 pl-2 text-right" style={{ color: t.text }}>{fmtEUR(proj)}</td>}
-                      </tr>
-                    ))}
+                    {(() => {
+                      const pr = sum((c) => (c.reel ? c.prevRev : 0)), pd = sum((c) => (c.reel ? c.prevDep : 0));
+                      const rr = sum((c) => (c.reel ? c.reel.rev : 0)), rd = sum((c) => (c.reel ? c.reel.dep : 0));
+                      return [["Revenus", pr, rr, false, projRev], ["Dépenses", pd, rd, true, projDep], ["Épargne", pr - pd, rr - rd, false, projRev - projDep]].map(([l, p, r, dep, proj]) => {
+                        const d = r - p, bon = dep ? d <= 0 : d >= 0;
+                        return (
+                          <tr key={l} style={{ borderTop: `1px solid ${t.border}` }}>
+                            <td className="py-1.5" style={{ color: t.text }}>{l}</td>
+                            <td className="py-1.5 px-2 text-right" style={{ color: t.textMuted }}>{fmtEUR(p)}</td>
+                            <td className="py-1.5 px-2 text-right" style={{ color: t.text }}>{fmtEUR(r)}</td>
+                            <td className="py-1.5 px-2 text-right" style={{ color: bon ? t.gain : t.loss }}>{d >= 0 ? "+" : "−"}{fmtEUR(Math.abs(d))}</td>
+                            {!isMobile && <td className="py-1.5 pl-2 text-right" style={{ color: t.text }}>{fmtEUR(proj)}</td>}
+                          </tr>
+                        );
+                      });
+                    })()}
                   </tbody>
                 </table>
               </div>
-            )}
-            <ChartLegend items={[{ label: "Épargne cumulée prévue", color: t.textMuted }, { label: "Épargne cumulée réelle", color: t.s1 }]} />
-            <ResponsiveContainer width="100%" height={isMobile ? 200 : 260}>
-              <LineChart data={courbe} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                <CartesianGrid stroke={t.border} vertical={false} />
-                <XAxis dataKey="periode" tickFormatter={monthLabel} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} minTickGap={12} />
-                <YAxis tickFormatter={(v) => `${Math.round(v / 1000)}k`} tick={{ fill: t.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} width={44} />
-                <ReferenceLine y={0} stroke={t.textMuted} strokeOpacity={0.6} />
-                <Tooltip contentStyle={tooltipStyle(t)} labelFormatter={(p) => monthLong(p)}
-                  formatter={(v, k) => [signed(v), k === "prevu" ? "Prévu (cumul)" : "Réel (cumul)"]} />
-                <Line dataKey="prevu" stroke={t.textMuted} strokeWidth={2} strokeDasharray="5 4" dot={false} isAnimationActive={false} />
-                <Line dataKey="reel" stroke={t.s1} strokeWidth={2} dot={{ r: 3, fill: t.s1, stroke: t.panel, strokeWidth: 2 }} connectNulls={false} isAnimationActive={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          </Panel>
+            </Panel>
+          )}
         </div>
       );
     }
@@ -4294,7 +4484,7 @@ Méthode de calcul de l'application :
       const [budgetRules, setBudgetRules] = useState({});
       const [budgetLimits, setBudgetLimits] = useState({});
       const [customCats, setCustomCats] = useState([]);
-      const [forecast, setForecast] = useState({ revenus: [], inclureMoyennes: true });
+      const [forecast, setForecast] = useState({ revenus: [], depenses: [], inclureMoyennes: true });
       // Les catégories créées par l'utilisateur rejoignent la liste partagée avant tout calcul
       applyCustomCategories(customCats);
       const [monthlyModalOpen, setMonthlyModalOpen] = useState(false);
